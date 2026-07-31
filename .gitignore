@@ -42,5 +42,8 @@ dist-sourcemaps/
 .claude/*
 !.claude/skills/
 
+# Local working dir (specs, notes, agent logs) — never commit
+.dev/
+
 # Alchemy local state + bundle artifacts (SaaS deploys)
 .alchemy/
