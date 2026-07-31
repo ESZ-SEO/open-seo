@@ -1,6 +1,6 @@
 {
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["web/**/*", "badseo/**/*"],
+  "exclude": ["web/**/*", "badseo/**/*", "renderer/**/*"],
   "compilerOptions": {
     "strict": true,
     "esModuleInterop": true,
