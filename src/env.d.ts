@@ -44,6 +44,13 @@ declare namespace Cloudflare {
     OPENROUTER_API_KEY?: string;
     // Optional OpenRouter model slug override (defaults in openrouter.ts).
     OPENROUTER_MODEL?: string;
+
+    // Visual report generator (render pipeline). RENDER_API_TOKEN gates
+    // GET /api/render/$ via a shared secret; when unset the endpoint refuses
+    // every request with 503 (open access is never permitted). RENDERER_URL is
+    // the base URL of the external renderer microservice.
+    RENDER_API_TOKEN?: string;
+    RENDERER_URL?: string;
   }
 }
 
