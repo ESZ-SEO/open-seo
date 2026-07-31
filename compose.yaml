@@ -35,5 +35,15 @@ services:
       - "127.0.0.1:${PORT:-3001}:${PORT:-3001}"
     volumes:
       - open_seo_data:/app/.wrangler
+
+  # HTML→PNG screenshot microservice (Node + Puppeteer). Called by the main
+  # app over the internal Compose network at http://renderer:3100.
+  renderer:
+    build: ./renderer
+    restart: unless-stopped
+    environment:
+      - PORT=3100
+    ports:
+      - "127.0.0.1:3100:3100"
 volumes:
   open_seo_data:
