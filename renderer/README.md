@@ -12,12 +12,13 @@ cannot run Chromium inline.
 
 Request body (JSON):
 
-| Field            | Type     | Required | Default | Notes                                            |
-|------------------|----------|----------|---------|--------------------------------------------------|
-| `html`           | string   | yes      | —       | Non-empty HTML to render.                        |
-| `width`          | number   | no       | `1280`  | Positive integer. Viewport + clip width (px).    |
-| `height`         | number   | no       | `800`   | Positive integer. Viewport + clip height (px).   |
-| `waitForSelector`| string   | no       | —       | CSS selector to wait for (visible) before shot.  |
+| Field             | Type    | Required | Default | Notes                                                                                                                                           |
+| ----------------- | ------- | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `html`            | string  | yes      | —       | Non-empty HTML to render.                                                                                                                       |
+| `width`           | number  | no       | `1280`  | Positive integer. Viewport + clip width (px).                                                                                                   |
+| `height`          | number  | no       | `800`   | Positive integer. Viewport height (px). When `fullPage` is true, only used for the initial layout — the capture spans the real document height. |
+| `waitForSelector` | string  | no       | —       | CSS selector to wait for (visible) before shot.                                                                                                 |
+| `fullPage`        | boolean | no       | `false` | Capture the entire scrollable document instead of clipping to `width`×`height`. Mutually exclusive with the legacy `clip` mode.                 |
 
 Responses:
 
@@ -32,10 +33,10 @@ Responses:
 
 ## Environment variables
 
-| Name                         | Default | Description                                              |
-|------------------------------|---------|----------------------------------------------------------|
-| `PORT`                       | `3100`  | Port to listen on.                                       |
-| `PUPPETEER_NAV_TIMEOUT_MS`   | `30000` | Launch/navigation/screenshot timeout (≈ per-request cap). |
+| Name                       | Default | Description                                               |
+| -------------------------- | ------- | --------------------------------------------------------- |
+| `PORT`                     | `3100`  | Port to listen on.                                        |
+| `PUPPETEER_NAV_TIMEOUT_MS` | `30000` | Launch/navigation/screenshot timeout (≈ per-request cap). |
 
 Listens on `0.0.0.0`.
 

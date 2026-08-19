@@ -427,6 +427,45 @@ describe("renderHtmlToPng", () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("forwards fullPage:true in the request body when requested", async () => {
+    mockEnv.RENDERER_URL = "http://renderer.test";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(PNG_BYTES, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderHtmlToPng("<html></html>", { fullPage: true });
+    const [, init] = fetchMock.mock.calls[0];
+    const body = parseRequestBody(init);
+    expect(body).toEqual(
+      expect.objectContaining({
+        html: "<html></html>",
+        width: 1280,
+        height: 800,
+        fullPage: true,
+      }),
+    );
+  });
+
+  it("omits fullPage from the body when not requested (backwards-compatible)", async () => {
+    mockEnv.RENDERER_URL = "http://renderer.test";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(PNG_BYTES, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderHtmlToPng("<html></html>");
+    const [, init] = fetchMock.mock.calls[0];
+    const body = parseRequestBody(init);
+    expect(body).not.toHaveProperty("fullPage");
+  });
 });
 
 // --------------------------------------------------------------------------------------------
@@ -518,6 +557,33 @@ describe("renderReport orchestrator", () => {
         device: "desktop",
       }),
     ).rejects.toThrow(/renderer failed after 3 attempts/);
+  });
+
+  it("requests fullPage captures for the 3 reports (so vertical content is not clipped)", async () => {
+    const r2 = createR2Fake();
+    mockEnv.R2 = r2;
+    mockEnv.RENDERER_URL = "http://renderer.test";
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => {
+      return new Response(PNG_BYTES, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    for (const report of ["backlinks", "competitors", "overview"] as const) {
+      fetchMock.mockClear();
+      await renderReport({
+        report,
+        domain: "example.com",
+        country: "ES",
+        device: "desktop",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0];
+      const body = parseRequestBody(init);
+      expect(body).toEqual(expect.objectContaining({ fullPage: true }));
+    }
   });
 });
 

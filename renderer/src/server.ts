@@ -16,6 +16,7 @@ const BodySchema = z.object({
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
   waitForSelector: z.string().min(1).optional(),
+  fullPage: z.boolean().optional(),
 });
 
 app.post("/screenshot", async (c) => {

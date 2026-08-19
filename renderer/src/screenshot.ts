@@ -7,17 +7,30 @@ export interface ScreenshotOptions {
   width?: number;
   height?: number;
   waitForSelector?: string;
+  /**
+   * When true, capture the entire scrollable document instead of clipping
+   * to `width`×`height`. Puppeteer forbids passing both `clip` and
+   * `fullPage: true`, so this is a branch — when true, `height` is ignored
+   * for the capture (the viewport height still affects initial layout, but
+   * fullPage expands to the real document height).
+   */
+  fullPage?: boolean;
 }
 
 /**
- * Renders `html` in a headless Chromium page and returns a PNG clipped to
- * width x height. Defaults: 1280 x 800 (per the E0.1 contract).
+ * Renders `html` in a headless Chromium page and returns a PNG.
+ *
+ * By default, the capture is clipped to `width` × `height` (defaults:
+ * 1280 × 800 — the E0.1 contract). When `fullPage: true`, the capture
+ * spans the entire scrollable document at `width` (the viewport height
+ * still controls the initial layout but is ignored at capture time).
  */
 export async function renderHtmlToPng(
   opts: ScreenshotOptions,
 ): Promise<Uint8Array> {
   const width = opts.width ?? 1280;
   const height = opts.height ?? 800;
+  const fullPage = opts.fullPage ?? false;
 
   return withPage(async (page) => {
     page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
@@ -39,10 +52,13 @@ export async function renderHtmlToPng(
       });
     }
 
-    const png = await page.screenshot({
-      type: "png",
-      clip: { x: 0, y: 0, width, height },
-    });
+    // Puppeteer disallows combining `clip` and `fullPage: true` — pick one.
+    const png = fullPage
+      ? await page.screenshot({ type: "png", fullPage: true })
+      : await page.screenshot({
+          type: "png",
+          clip: { x: 0, y: 0, width, height },
+        });
     return png;
   });
 }

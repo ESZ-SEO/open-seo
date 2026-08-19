@@ -74,7 +74,7 @@ have product defaults.
 
 Note: `device` is validated and passed to the report template as an
 informational chip — it does **not** change the renderer's viewport, which is
-fixed at 1280×800px. See [Limitations](#limitations).
+fixed at 1280px wide (the height is dynamic — see [Limitations](#limitations)).
 
 Unknown `report` or `device` values, missing `domain`, or empty `domain` all
 return `400 INVALID_PARAMS`:
@@ -117,10 +117,11 @@ at a running `renderer/` microservice and `RENDER_API_TOKEN=test-token`).
 $ curl -H "Authorization: Bearer test-token" \
     "http://localhost:3001/api/render/?report=backlinks&domain=example.com&country=ES&device=desktop" \
     -o backlinks.png -w "STATUS:%{http_code}|TYPE:%{content_type}|BYTES:%{size_download}|TIME:%{time_total}s\n"
-STATUS:200|TYPE:image/png|BYTES:58781|TIME:0.023s
+STATUS:200|TYPE:image/png|BYTES:134385|TIME:0.225s
 ```
 
-PNG: 58781 bytes, 1280×800.
+PNG: 134385 bytes, 1280×2893 (full-page capture, vertical content is not
+clipped).
 
 ### Competitors
 
@@ -128,8 +129,11 @@ PNG: 58781 bytes, 1280×800.
 $ curl -H "Authorization: Bearer test-token" \
     "http://localhost:3001/api/render/?report=competitors&domain=example.com&country=ES&device=desktop" \
     -o competitors.png -w "STATUS:%{http_code}|TYPE:%{content_type}|BYTES:%{size_download}|TIME:%{time_total}s\n"
-STATUS:200|TYPE:image/png|BYTES:54293|TIME:0.220s
+STATUS:200|TYPE:image/png|BYTES:82843|TIME:0.211s
 ```
+
+PNG: 82843 bytes, 1280×1484 (single-domain view — Venn panel is omitted when
+no `competitors` are supplied; full-page capture, not clipped).
 
 With explicit competitors via CSV:
 
@@ -137,8 +141,10 @@ With explicit competitors via CSV:
 $ curl -H "Authorization: Bearer test-token" \
     "http://localhost:3001/api/render/?report=competitors&domain=example.com&country=ES&device=desktop&competitors=foo.com,bar.com" \
     -o competitors-csv.png -w "STATUS:%{http_code}|TYPE:%{content_type}|BYTES:%{size_download}|TIME:%{time_total}s\n"
-STATUS:200|TYPE:image/png|BYTES:59987|TIME:0.183s
+STATUS:200|TYPE:image/png|BYTES:111746|TIME:0.193s
 ```
+
+PNG: 111746 bytes, 1280×1714 (full-page capture with Venn panel).
 
 ### Overview
 
@@ -146,8 +152,10 @@ STATUS:200|TYPE:image/png|BYTES:59987|TIME:0.183s
 $ curl -H "Authorization: Bearer test-token" \
     "http://localhost:3001/api/render/?report=overview&domain=example.com&country=ES&device=desktop" \
     -o overview.png -w "STATUS:%{http_code}|TYPE:%{content_type}|BYTES:%{size_download}|TIME:%{time_total}s\n"
-STATUS:200|TYPE:image/png|BYTES:63334|TIME:0.180s
+STATUS:200|TYPE:image/png|BYTES:96302|TIME:0.228s
 ```
+
+PNG: 96302 bytes, 1280×1637 (full-page capture, not clipped).
 
 ### n8n-style (`?token=` query)
 
@@ -158,10 +166,13 @@ $ curl \
 HTTP/1.1 200 OK
 content-type: image/png
 cache-control: private, max-age=300
-content-length: 63334
+content-length: 96004
 …
-STATUS:200|BYTES:63334|TIME:0.020s
+STATUS:200|BYTES:96004|TIME:0.218s
 ```
+
+PNG: 96004 bytes, 1280×1637 (same full-page dimensions — the n8n path is the
+same render pipeline).
 
 ## Cache
 
@@ -181,13 +192,15 @@ hard — physical cleanup is deferred to E5.2.
 
 Empirical cache-hit speedup (same `report=backlinks&domain=example.com&...`):
 
-| Call | Wall time | Bytes |
-| ---- | --------- | ----- |
-| 1st  | 23 ms     | 58781 |
-| 2nd  | 15 ms     | 58781 |
+| Call | Wall time | Bytes  |
+| ---- | --------- | ------ |
+| 1st  | 204 ms    | 134222 |
+| 2nd  | 12 ms     | 134222 |
 
 Identical bytes confirm a real cache hit (not a re-render that happened to be
-fast).
+fast). Wall times are wall-clock end-to-end through the Worker (so the
+"2nd" number includes Vite SSR overhead and the R2 GET, not just the bytes
+read).
 
 **HTTP `cache-control`**: the response carries `private, max-age=300`
 (5 minutes). This only affects browsers and intermediate HTTP caches — it
@@ -212,15 +225,13 @@ stable contracts.
 
 ## Limitations
 
-**Viewport is fixed at 1280×800px.** The renderer microservice captures a
-1280×800 window. The Backlinks, Competitors, and Overview reports all carry
-more vertical content than fits in 800px — the PNG returned by the
-endpoint **clips the content that overflows the bottom edge**. This is
-visible in real renders (the section headings at the bottom of the
-template are truncated). Documented as a known limitation pending the
-upstream fix in the renderer microservice (candidate: `fullPage: true` in
-Puppeteer). It is not a bug in your integration; do not interpret a
-clipped PNG as a sign that n8n is misconfigured.
+**Viewport is dynamic in height, fixed at 1280px wide.** The renderer
+microservice captures the full scrollable document at the requested width
+(Puppeteer `fullPage: true`). The Backlinks, Competitors, and Overview
+reports all exceed 800px vertically — the returned PNG spans the entire
+document height (≈1500–2900px depending on the report and the data
+present). It is not clipped. Earlier revisions of this endpoint used a
+fixed 1280×800 viewport; that limitation has been resolved.
 
 **`device` is informational.** The parameter is validated and rendered as a
 chip in the report header (so consumers know which view was requested) but
