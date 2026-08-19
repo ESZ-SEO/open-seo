@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  DataforseoLabsGoogleDomainIntersectionLiveRequestInfo,
   DataforseoLabsGoogleDomainRankOverviewLiveRequestInfo,
   DataforseoLabsGoogleKeywordIdeasLiveRequestInfo,
   DataforseoLabsGoogleKeywordOverviewLiveRequestInfo,
@@ -27,7 +28,11 @@ import {
 // under the names the rest of the app already uses (no hand-written Zod).
 export type LabsKeywordDataItem = KeywordDataInfo;
 type RelatedKeywordItem = DataforseoLabsRelatedKeywordsLiveItem;
-type DomainMetricsItem = DataforseoLabsDomainRankOverviewLiveItem;
+export type DomainMetricsItem = DataforseoLabsDomainRankOverviewLiveItem;
+export type DomainRankOverviewMetrics =
+  NonNullable<DomainMetricsItem["metrics"]> extends Record<string, infer U>
+    ? U
+    : never;
 export type RelevantPagesItem = DataforseoLabsRelevantPagesLiveItem;
 export type KeywordOverviewItem = DataforseoLabsGoogleKeywordOverviewLiveItem;
 type SerpCompetitorItem = DataforseoLabsSerpCompetitorsLiveItem;
@@ -319,6 +324,116 @@ export async function fetchSerpCompetitors(input: {
   const task = assertOk(response);
   return {
     data: task.result?.[0]?.items ?? [],
+    billing: buildTaskBilling(task),
+  };
+}
+
+// Same loosely-typed fields pattern the SDK uses for ranked_keywords; the
+// item body has a big passthrough surface so we narrow just what the report
+// reads (keyword + per-domain rank). `intersect_position` is added in some
+// response variants; allow it where present.
+const domainIntersectionSerpElementSchema = z
+  .object({
+    serp_item: z
+      .object({
+        url: z.string().nullable().optional(),
+        relative_url: z.string().nullable().optional(),
+        rank_absolute: z.number().nullable().optional(),
+        rank_group: z.number().nullable().optional(),
+        etv: z.number().nullable().optional(),
+        type: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+    intersect_position: z.number().nullable().optional(),
+    rank_absolute: z.number().nullable().optional(),
+    etv: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const domainIntersectionItemSchema = z
+  .object({
+    se_type: z.string().nullable().optional(),
+    keyword_data: z
+      .object({
+        keyword: z.string().nullable().optional(),
+        keyword_info: z
+          .object({
+            search_volume: z.number().nullable().optional(),
+            cpc: z.number().nullable().optional(),
+            competition: z.number().nullable().optional(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+    first_domain_serp_element: domainIntersectionSerpElementSchema
+      .nullable()
+      .optional(),
+    second_domain_serp_element: domainIntersectionSerpElementSchema
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+
+export type DomainIntersectionItem = z.infer<
+  typeof domainIntersectionItemSchema
+>;
+
+/**
+ * Labs `domain_intersection` — pairwise comparison (target_1 vs target_2).
+ *
+ * Note: the underlying API is PAIRWISE only (two domains per call). For the
+ * 3-circle Venn in the Competitors report, the service layer fans this out
+ * into multiple calls — see `buildCompetitorsReportData` (E2.3).
+ *
+ * `intersections`:
+ *  - `true`  → keywords for which BOTH target_1 and target_2 rank in SERP
+ *              (used for the "Débiles" / shared-keyword Venn lobe).
+ *  - `false` → keywords for which target_1 ranks and target_2 does NOT
+ *              (used for "Faltantes" — i.e. keywords the competitor owns
+ *              alone). To get the symmetric set, the caller makes a second
+ *              call swapping target_1/target_2.
+ */
+export async function fetchDomainIntersection(input: {
+  target1: string;
+  target2: string;
+  locationCode: number;
+  languageCode: string;
+  intersections: boolean;
+  limit: number;
+}): Promise<DataforseoApiResponse<DomainIntersectionItem[]>> {
+  // The SDK serialises domain_intersection's `target_1` / `target_2` via
+  // `toJSON`, which references the un-underscored `target1` / `target2`
+  // instance fields. The constructor assigns any field by key, but `toJSON`
+  // only emits the SDK-named fields, so we have to set them post-construction
+  // (the field is declared `target_1?` on the interface, but `toJSON` maps
+  // `this.target1 → data.target1`, hence the discrepancy).
+  const req = new DataforseoLabsGoogleDomainIntersectionLiveRequestInfo();
+  req.target_1 = input.target1;
+  req.target_2 = input.target2;
+  req.location_code = input.locationCode;
+  req.language_code = input.languageCode;
+  req.intersections = input.intersections;
+  req.item_types = ["organic", "paid"];
+  req.include_serp_info = false;
+  req.limit = input.limit;
+  // Sorting by search_volume desc keeps the keyword-gap table focused on
+  // commercially meaningful terms (the rendered report caps the table at
+  // ~20 rows anyway).
+  req.order_by = ["keyword_data.keyword_info.search_volume,desc"];
+  const response = await labsApi().googleDomainIntersectionLive([req]);
+  const task = assertOk(response);
+  return {
+    data: parseTaskItems(
+      "google-domain-intersection-live",
+      task,
+      domainIntersectionItemSchema,
+    ),
     billing: buildTaskBilling(task),
   };
 }

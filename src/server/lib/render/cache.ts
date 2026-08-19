@@ -27,23 +27,49 @@ export type ReportKind = keyof typeof RENDER_TTL_SECONDS;
 
 const CACHE_PREFIX = "render-cache/";
 
-/** Deterministic cache key from the report coordinates. */
+/**
+ * Build the on-the-wire `competitors` slice for the cache hash. Two empty
+ * arrays are distinct from a no-competitors report — both produce the same
+ * hash here so the cache layers do not collide them.
+ */
+function normalizeCompetitors(competitors: readonly string[] | undefined) {
+  if (!competitors || competitors.length === 0) return [] as string[];
+  // Sort defensively — the schema already enforces sorted uniqueness, but the
+  // cache key MUST stay stable if callers ever pass unsorted input.
+  return Array.from(new Set(competitors)).toSorted();
+}
+
+/**
+ * Deterministic cache key from the report coordinates.
+ *
+ * E2: two reports for the same primary domain with different competitor sets
+ * MUST produce distinct keys — otherwise a cache hit for `domain vs [a]`
+ * would serve a PNG for `domain vs [b]`. The competitor list is included in
+ * the hash; ordering is normalised before hashing so the input order is
+ * irrelevant.
+ */
 export async function buildReportCacheKey(
   report: ReportKind,
   domain: string,
   country: string,
   device: string,
+  competitors?: readonly string[],
 ): Promise<string> {
-  return buildCacheKey("render:report", { report, domain, country, device });
+  const normalized = normalizeCompetitors(competitors);
+  return buildCacheKey("render:report", {
+    report,
+    domain,
+    country,
+    device,
+    competitors: normalized,
+  });
 }
 
 /**
  * Read a cached PNG. Returns null on miss or soft-expiry. Bytes are returned
  * as a `Uint8Array` so they can be written straight back to R2 or served.
  */
-export async function getCachedReport(
-  key: string,
-): Promise<Uint8Array | null> {
+export async function getCachedReport(key: string): Promise<Uint8Array | null> {
   const object = await env.R2.get(`${CACHE_PREFIX}${key}`);
   if (!object) return null;
 
