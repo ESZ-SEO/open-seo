@@ -8,7 +8,10 @@ import { env } from "cloudflare:workers";
  */
 
 export class RenderError extends Error {
-  constructor(message: string, readonly cause?: unknown) {
+  constructor(
+    message: string,
+    readonly cause?: unknown,
+  ) {
     super(message);
     this.name = "RenderError";
   }
@@ -18,6 +21,13 @@ export type RenderOptions = {
   width?: number;
   height?: number;
   waitForSelector?: string;
+  /**
+   * Capture the full document instead of clipping to `width`×`height`.
+   * Reported PNGs are taller (and slightly larger) than the fixed-clip
+   * legacy form, so this is only used by callers whose templates assume
+   * a dynamic height (the 3 SEO reports).
+   */
+  fullPage?: boolean;
 };
 
 const DEFAULT_WIDTH = 1280;
@@ -39,7 +49,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Render an HTML document to a PNG via the renderer microservice.
  *
- * POSTs `{html, width, height, waitForSelector}` to
+ * POSTs `{html, width, height, waitForSelector, fullPage}` to
  * `{RENDERER_URL}/screenshot` and returns the binary PNG. Retries up to
  * {@link MAX_ATTEMPTS} times within a shared {@link TOTAL_TIMEOUT_MS} budget,
  * then throws a {@link RenderError}.
@@ -55,6 +65,7 @@ export async function renderHtmlToPng(
     width,
     height,
     waitForSelector: opts.waitForSelector,
+    fullPage: opts.fullPage,
   });
 
   const deadline = Date.now() + TOTAL_TIMEOUT_MS;

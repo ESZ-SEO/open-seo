@@ -89,7 +89,9 @@ export async function renderReport(params: RenderParams): Promise<Uint8Array> {
     device,
     competitors,
   );
-  const png = await renderHtmlToPng(html);
+  // Reports are taller than the 1280×800 viewport — capture the full
+  // document so nothing gets clipped at the bottom edge.
+  const png = await renderHtmlToPng(html, { fullPage: true });
 
   await setCachedReport(cacheKey, png, RENDER_TTL_SECONDS[report]);
   await uploadPng(`rendered/${report}/${cacheKey}.png`, png);
