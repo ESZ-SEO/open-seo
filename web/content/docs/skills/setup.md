@@ -5,6 +5,8 @@ description: "Add OpenSEO skill files to your AI agent after connecting OpenSEO 
 
 OpenSEO Agent Skills are separate files from OpenSEO MCP.
 
+On Claude Code, skip the steps below and use the [OpenSEO plugin](/docs/claude-code-plugin) instead — it installs MCP and every skill in one step. On Codex CLI, use the [OpenSEO plugin](/docs/codex-plugin) the same way.
+
 First, [set up OpenSEO MCP](/docs/mcp). MCP gives your agent access to OpenSEO data.
 
 Then add the OpenSEO `SKILL.md` files you want your agent to use. Each skill gives your agent one SEO workflow.
