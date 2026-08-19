@@ -12,8 +12,10 @@ import {
 import { renderReportShell } from "@/server/lib/render/templates/shell";
 import { renderBacklinksReport } from "@/server/lib/render/templates/backlinks";
 import { renderCompetitorsReport } from "@/server/lib/render/templates/competitors";
+import { renderOverviewReport } from "@/server/lib/render/templates/overview";
 import { buildBacklinksReportData } from "@/server/lib/render/reports/backlinks-report";
 import { buildCompetitorsReportData } from "@/server/lib/render/reports/competitors-report";
+import { buildOverviewReportData } from "@/server/lib/render/reports/overview-report";
 import { uploadPng } from "@/server/lib/render/r2-upload";
 
 /**
@@ -98,8 +100,9 @@ export async function renderReport(params: RenderParams): Promise<Uint8Array> {
 /**
  * Dispatch to the appropriate report template + data pipeline.
  *
- * E1 implements `backlinks`; E2 implements `competitors`; overview keeps the
- * E0 generic shell until E3 lands.
+ * E1 implements `backlinks`; E2 implements `competitors`; E3 implements
+ * `overview` (the 1-page Domain Overview summary — 5 tiles, country
+ * distribution table, two charts; E3.4 historical traffic is a stub here).
  */
 async function buildReportHtml(
   report: RenderParams["report"],
@@ -125,6 +128,10 @@ async function buildReportHtml(
       device,
       data,
     });
+  }
+  if (report === "overview") {
+    const data = await buildOverviewReportData({ domain, country });
+    return renderOverviewReport({ report, domain, country, device, data });
   }
   return renderReportShell({ report, domain, country, device });
 }

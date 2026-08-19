@@ -12,7 +12,10 @@ import {
   type DomainRankOverviewMetrics,
   type DomainRankedKeywordItem,
 } from "@/server/lib/dataforseo/labs";
-import { LOCATION_OPTIONS } from "@/shared/keyword-locations";
+import {
+  computeAuthorityScore,
+  resolveMarket,
+} from "@/server/lib/render/reports/shared";
 
 /**
  * Service: build the data needed by the Competitors report template (E2).
@@ -44,29 +47,6 @@ export type BuildCompetitorsReportInput = {
   /** Up to two competitor domains (already parsed + deduped by the schema). */
   competitors: string[];
 };
-
-type ResolvedMarket = {
-  locationCode: number;
-  languageCode: string;
-  countryLabel: string;
-};
-
-function resolveMarket(country: string): ResolvedMarket {
-  const upper = country.toUpperCase();
-  const match = LOCATION_OPTIONS.find((option) => option.shortLabel === upper);
-  if (!match) {
-    return {
-      locationCode: 2724,
-      languageCode: "es",
-      countryLabel: upper,
-    };
-  }
-  return {
-    locationCode: match.code,
-    languageCode: match.languageCode,
-    countryLabel: match.shortLabel,
-  };
-}
 
 /** Source tag for each cell — distinguishes a real value from "API failed". */
 type Source<T> = { value: T; source: "ok" | "empty" | "error" };
@@ -147,18 +127,6 @@ export type CompetitorsReportData = {
 // pipeline honest about per-request DataForSEO cost.
 const RANKED_KEYWORDS_LIMIT = 100;
 const INTERSECT_LIMIT = 30;
-
-/** Authority Score (composed) — same composition as E1. */
-function computeAuthorityScore(
-  summary: BacklinksSummaryItem | null | undefined,
-): number | null {
-  if (!summary) return null;
-  const base = summary.rank;
-  if (base == null) return null;
-  const spam = summary.backlinks_spam_score ?? 0;
-  const penalty = Math.min(25, Math.round(spam * 0.25));
-  return Math.max(0, Math.min(100, Math.round(base - penalty)));
-}
 
 /** Pull the metrics block for one search-engine from a Labs rank-overview row. */
 function pickMetrics(
@@ -541,7 +509,10 @@ export async function buildCompetitorsReportData(
   };
 }
 
-// Re-exports used by tests.
+// Re-exports used by tests. `resolveMarket` and `computeAuthorityScore` are
+// imported from `shared.ts` (E3.0 extraction) — the test re-binds them
+// through the same `__test` surface so `competitors-report.test.ts` keeps
+// importing the helpers from this module unchanged.
 export const __test = {
   resolveMarket,
   computeAuthorityScore,

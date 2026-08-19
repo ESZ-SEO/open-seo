@@ -503,6 +503,116 @@ export function renderBarPairChart(
   return svg(width, height, `${grid}${bars.join("")}${legendMarkup}${xTicks}`);
 }
 
+/* ----------------------------- StackedBarChart --------------------------- */
+
+/**
+ * One stacked bar = one column. Each column has a list of segments with a
+ * label and a value; the y-axis is the cumulative sum. The chart is used by
+ * the Domain Overview (E3) report — see `KEYWORD_BUCKETS` in
+ * `overview-report.ts` — to map the "Palabras clave orgánicas" bucket
+ * distribution (Top 3 / 4–10 / 11–20 / 21–50 / 51–100 / SERP features) in a
+ * single snapshot. We pick a stacked bar instead of a stacked area because
+ * the data is a single point in time; the area apilada verdana in
+ * Semrush's layout reads better as a column when there's only one column.
+ *
+ * Visual contract:
+ *  - Width/height defaults fit the 480×200 chart card used by the template.
+ *  - Falls back to `placeholderSvg("Sin datos")` when the columns list is
+ *    empty or every segment is zero (no info to draw).
+ *  - Optional per-segment colour override; otherwise pulls from a small
+ *    brand palette keyed by series index.
+ *  - A legend at the top left reads `label` + value, one row per segment.
+ */
+export type StackedBarSegment = {
+  label: string;
+  value: number;
+  color?: string;
+};
+
+export type StackedBarColumn = {
+  /** Stable label for the column (e.g. "Hoy"). */
+  label: string;
+  segments: StackedBarSegment[];
+};
+
+export function renderStackedBarChart(
+  columns: StackedBarColumn[],
+  opts: { width?: number; height?: number } = {},
+): string {
+  if (columns.length === 0) return placeholderSvg("Sin datos");
+  const total = columns.reduce(
+    (acc, c) =>
+      acc + c.segments.reduce((s, seg) => s + Math.max(0, seg.value), 0),
+    0,
+  );
+  if (total === 0) return placeholderSvg("Sin datos");
+
+  const width = opts.width ?? 480;
+  const height = opts.height ?? 200;
+  const axes = chartAxes(width, height);
+  const domain: [number, number] = [0, total * 1.1];
+
+  const grid = renderYAxisTicks(axes, domain, 4);
+  const palette = [
+    PALETTE.series1,
+    PALETTE.series2,
+    PALETTE.series3,
+    PALETTE.series4,
+    PALETTE.brandDark,
+    PALETTE.accent,
+  ];
+
+  const bars: string[] = [];
+  columns.forEach((column, ci) => {
+    const groupWidth = axes.innerW / columns.length;
+    const barWidth = Math.max(8, groupWidth * 0.6);
+    const groupX =
+      axes.paddingLeft + ci * groupWidth + (groupWidth - barWidth) / 2;
+    let runningTotal = 0;
+    column.segments.forEach((seg, si) => {
+      const value = Math.max(0, seg.value);
+      const t = runningTotal / (domain[1] - domain[0] || 1);
+      const tHeight = (value / (domain[1] - domain[0] || 1)) * axes.innerH;
+      const segY = axes.paddingTop + axes.innerH - axes.innerH * t - tHeight;
+      const color = seg.color ?? palette[si % palette.length] ?? PALETTE.brand;
+      bars.push(
+        `<rect x="${groupX.toFixed(1)}" y="${segY.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${tHeight.toFixed(1)}" fill="${color}" stroke="${PALETTE.cardBg}" stroke-width="1"/>`,
+      );
+      runningTotal += value;
+    });
+  });
+
+  // Legend at the top — one row per segment, sorted by the order they appear
+  // in the first column (caller decides the ordering).
+  const firstColumn = columns[0];
+  const legendY = 6;
+  let legendCursorX = axes.paddingLeft;
+  const legendMarkup = (firstColumn?.segments ?? [])
+    .map((seg, si) => {
+      const color = seg.color ?? palette[si % palette.length] ?? PALETTE.brand;
+      const label = `${seg.label} ${Math.round(seg.value)}`;
+      const lw = approxTextWidth(label, 10) + 16;
+      const row = `
+        <rect x="${legendCursorX}" y="${legendY}" width="9" height="9" rx="2" fill="${color}" />
+        <text x="${legendCursorX + 14}" y="${legendY + 8}" font-size="10" fill="${PALETTE.muted}">${escapeXml(label)}</text>`;
+      legendCursorX += lw;
+      return row;
+    })
+    .join("");
+  void legendCursorX;
+
+  // X axis labels — one per column.
+  const xTicks = columns
+    .map((column, ci) => {
+      const groupWidth = axes.innerW / columns.length;
+      const x = axes.paddingLeft + ci * groupWidth + groupWidth / 2;
+      return `<text x="${x.toFixed(1)}" y="${(axes.paddingTop + axes.innerH + 16).toFixed(1)}" text-anchor="middle" font-size="10" fill="${PALETTE.muted}">${escapeXml(column.label)}</text>`;
+    })
+    .join("");
+
+  return svg(width, height, `${grid}${bars.join("")}${legendMarkup}${xTicks}`);
+}
+
 /* ----------------------------- NetworkGraph --------------------------- */
 
 export function renderNetworkGraph(

@@ -8,6 +8,7 @@ import {
   renderNetworkGraph,
   renderPieChart,
   renderRadarChart,
+  renderStackedBarChart,
   renderVennDiagram,
 } from "@/server/lib/render/charts/charts";
 import type {
@@ -180,5 +181,38 @@ describe("charts · E2 venn + donut", () => {
     // Two slices.
     const paths = (svg.match(/<path /g) ?? []).length;
     expect(paths).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renderStackedBarChart draws one column with one rect per segment", () => {
+    const svg = renderStackedBarChart([
+      {
+        label: "Hoy",
+        segments: [
+          { label: "Top 3", value: 5 },
+          { label: "4–10", value: 7 },
+          { label: "11–20", value: 12 },
+        ],
+      },
+    ]);
+    expect(svg.startsWith("<svg")).toBe(true);
+    // 3 segments → 3 rects.
+    const rects = (svg.match(/<rect /g) ?? []).length;
+    expect(rects).toBeGreaterThanOrEqual(3);
+    // Legend includes every label.
+    expect(svg).toContain("Top 3");
+    expect(svg).toContain("4–10");
+    expect(svg).toContain("11–20");
+  });
+
+  it("renderStackedBarChart placeholder for empty columns", () => {
+    expect(renderStackedBarChart([])).toContain("Sin datos");
+  });
+
+  it("renderStackedBarChart placeholder when every segment is zero", () => {
+    expect(
+      renderStackedBarChart([
+        { label: "Hoy", segments: [{ label: "x", value: 0 }] },
+      ]),
+    ).toContain("Sin datos");
   });
 });

@@ -12,7 +12,10 @@ import {
   type BacklinksHistoryItem,
 } from "@/server/lib/dataforseo/backlinks";
 import { fetchDomainRankOverview } from "@/server/lib/dataforseo/labs";
-import { LOCATION_OPTIONS } from "@/shared/keyword-locations";
+import {
+  computeAuthorityScore,
+  resolveMarket,
+} from "@/server/lib/render/reports/shared";
 
 /**
  * Service: build the data needed by the Backlinks report template (E1).
@@ -44,50 +47,6 @@ export type BuildBacklinksReportInput = {
   /** ISO short label from the endpoint (`"ES"`, `"US"`, …). */
   country: string;
 };
-
-type ResolvedMarket = {
-  locationCode: number;
-  languageCode: string;
-  countryLabel: string;
-};
-
-/** Look up a country short label (e.g. `ES`) → DataForSEO location code. */
-function resolveMarket(country: string): ResolvedMarket {
-  const upper = country.toUpperCase();
-  const match = LOCATION_OPTIONS.find((option) => option.shortLabel === upper);
-  // Fallbacks: ES / Spain · en (matches the E0 default and keeps the report
-  // safe for unknown countries instead of throwing at the boundary).
-  if (!match) {
-    return {
-      locationCode: 2724,
-      languageCode: "es",
-      countryLabel: upper,
-    };
-  }
-  return {
-    locationCode: match.code,
-    languageCode: match.languageCode,
-    countryLabel: match.shortLabel,
-  };
-}
-
-/**
- * Proprietary authority score (0–100). Combines:
- *  - DataForSEO `rank` (already 0–100 `rank_scale=one_hundred`) as the base
- *  - a small penalty for spam (spammy backlink profile drags authority down)
- *
- * Kept intentionally simple and fully deterministic so the report stays
- * reproducible across runs; tuning belongs to E3.2 alongside the Domain
- * Overview score (the same building blocks appear there).
- */
-function computeAuthorityScore(summary: BacklinksSummaryItem): number | null {
-  const base = summary.rank;
-  if (base == null) return null;
-  const spam = summary.backlinks_spam_score ?? 0;
-  // Spam is a 0–100 higher-is-worse scale; subtract up to 25 points worst case.
-  const penalty = Math.min(25, Math.round(spam * 0.25));
-  return Math.max(0, Math.min(100, Math.round(base - penalty)));
-}
 
 /**
  * Extract organic estimated traffic from the Labs domain overview metrics.
@@ -666,7 +625,10 @@ export async function buildBacklinksReportData(
   };
 }
 
-// Re-exports used by tests.
+// Re-exports used by tests. `resolveMarket` and `computeAuthorityScore` are
+// imported from `shared.ts` (E3.0 extraction) — the test re-binds them
+// through the same `__test` surface so `backlinks-report.test.ts` keeps
+// importing the helpers from this module unchanged.
 export const __test = {
   resolveMarket,
   computeAuthorityScore,

@@ -35,17 +35,26 @@ export type DomainRankOverviewMetrics =
     : never;
 export type RelevantPagesItem = DataforseoLabsRelevantPagesLiveItem;
 export type KeywordOverviewItem = DataforseoLabsGoogleKeywordOverviewLiveItem;
-type SerpCompetitorItem = DataforseoLabsSerpCompetitorsLiveItem;
+export type SerpCompetitorItem = DataforseoLabsSerpCompetitorsLiveItem;
 
 // Ranked keywords is the one Labs endpoint the SDK types loosely: its
 // `ranked_serp_element.serp_item` is the base element item, so the url / etv /
 // rank fields we read are untyped (`any`). Keep a focused schema so the
 // domain-keyword mapper stays type-safe.
+//
+// `rank_group` is the position among organic results only (0 = top organic
+// result) — `rank_absolute` is the position in the full SERP including ads /
+// featured snippets / etc. The codebase has a convention (see
+// `serp.ts:132`, `features/keywords/.../serp.ts:44`) of bucketing keywords
+// by `rank_group` (with `rank_absolute` fallback) to avoid ad-derived
+// distortion. E3.2 (Domain Overview) reads `rank_group` for the bucket
+// stacking chart, so we add it here as a non-breaking passthrough.
 const rankedSerpItemSchema = z
   .object({
     url: z.string().nullable().optional(),
     relative_url: z.string().nullable().optional(),
     rank_absolute: z.number().nullable().optional(),
+    rank_group: z.number().nullable().optional(),
     etv: z.number().nullable().optional(),
   })
   .passthrough();
