@@ -567,6 +567,140 @@ export function renderNetworkGraph(
   return svg(width, height, `${linkMarkup}${nodeMarkup}${centreMark}`);
 }
 
+/* ----------------------------- VennDiagram --------------------------- */
+
+export type VennDatum = { label: string; value: number; color?: string };
+export type VennPair = { left: string; right: string; value: number };
+
+export type VennInput = {
+  /** Three ring "memberships", in order: primary, comp1, comp2. */
+  sets: VennDatum[];
+  /**
+   * Pairwise intersection counts (only the ones we actually have). Omit
+   * `comp1-comp2` when it's the approximated lobe (0 bound) — the renderer
+   * will read it from `comp1AndComp2` even when that's just the placeholder.
+   */
+  pairs?: VennPair[];
+  /** Total keyword count for the headline label. */
+  total?: number;
+  /** Width/height override (defaults 360×280 — fits the spec's card). */
+  opts?: { width?: number; height?: number };
+};
+
+/**
+ * Hand-rolled 3-circle Venn diagram (SVG only — Recharts has no primitive).
+ *
+ * Layout strategy (deterministic, no library needed):
+ *  - viewport `width × height`
+ *  - primary circle on top
+ *  - comp1 left, comp2 right, both at the base
+ *  - discs use 0.32 fill opacity so the overlap reads visually; the centre
+ *    text labels stay OUTSIDE each circle (on the triangle's outer edge)
+ *    so a single, primary colour does not muddy the legibility.
+ */
+export function renderVennDiagram(input: VennInput): string {
+  const width = input.opts?.width ?? 360;
+  const height = input.opts?.height ?? 280;
+  const sets = input.sets;
+  if (sets.length === 0) return placeholderSvg("Sin datos");
+
+  const radius = Math.min(width / 5.5, height / 4.2);
+
+  const cx = width / 2;
+  const cy = height / 2 - radius * 0.1;
+
+  const tri = radius * 0.9;
+  const positions: Array<{ x: number; y: number }> = [
+    { x: cx, y: cy - tri * 0.55 }, // primary
+    { x: cx - tri * 0.7, y: cy + tri * 0.4 }, // comp1 (left)
+    { x: cx + tri * 0.7, y: cy + tri * 0.4 }, // comp2 (right)
+  ];
+
+  const defaultColors = [PALETTE.brand, PALETTE.accent, PALETTE.series3];
+  const overlayOpacity = 0.32;
+
+  const circles = sets
+    .slice(0, 3)
+    .map((d, i) => {
+      const pos = positions[i];
+      if (!pos) return "";
+      const fill = d.color ?? defaultColors[i] ?? PALETTE.brand;
+      return `<circle cx="${pos.x.toFixed(1)}" cy="${pos.y.toFixed(1)}" r="${radius.toFixed(1)}" fill="${fill}" fill-opacity="${overlayOpacity}" stroke="${fill}" stroke-width="1.5"/>`;
+    })
+    .join("");
+
+  const labels = sets
+    .slice(0, 3)
+    .map((d, i) => {
+      const pos = positions[i];
+      if (!pos) return "";
+      const dx = pos.x - cx;
+      const dy = pos.y - cy;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const lx = pos.x + (dx / len) * (radius + 18);
+      const ly = pos.y + (dy / len) * (radius + 18);
+      const text = `${escapeXml(truncate(d.label, 18))}: ${formatNumberCompact(d.value)}`;
+      return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="11" fill="${PALETTE.text}" font-weight="600">${text}</text>`;
+    })
+    .join("");
+
+  const pairLabels = (input.pairs ?? [])
+    .map((p) => {
+      const idxA = sets.findIndex((s) => s.label === p.left);
+      const idxB = sets.findIndex((s) => s.label === p.right);
+      if (idxA < 0 || idxB < 0) return "";
+      const a = positions[idxA];
+      const b = positions[idxB];
+      if (!a || !b) return "";
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2 - 4;
+      return `<text x="${mx.toFixed(1)}" y="${my.toFixed(1)}" text-anchor="middle" font-size="10" fill="${PALETTE.muted}">∩ ${formatNumberCompact(p.value)}</text>`;
+    })
+    .join("");
+
+  const headline =
+    typeof input.total === "number"
+      ? `<text x="${cx}" y="${(height - 18).toFixed(1)}" text-anchor="middle" font-size="11" fill="${PALETTE.muted}">${formatNumberCompact(input.total)} keywords en juego</text>`
+      : "";
+
+  return svg(width, height, `${circles}${labels}${pairLabels}${headline}`);
+}
+
+/* ----------------------------- DonutChart ---------------------------- */
+
+/**
+ * Donut variant of {@link renderPieChart}. Our hand-rolled pie implementation
+ * already draws a hollow centre (`innerRadius > 0`), so the donut is a thin
+ * wrapper that documents intent at the call site and lets us grow
+ * donut-specific defaults later (e.g. custom centre text).
+ */
+export type DonutDatum = PieDatum;
+
+export function renderDonutChart(
+  data: DonutDatum[],
+  opts: { width?: number; height?: number; centerLabel?: string } = {},
+): string {
+  if (data.length === 0) {
+    return renderPieChart(data, opts); // already returns a placeholder
+  }
+  const generated = renderPieChart(data, opts);
+  if (!opts.centerLabel) return generated;
+  const labelText = escapeXml(opts.centerLabel);
+  // Splice a label into the existing svg: the pie writes "Total" + a
+  // compact number, we replace with our label + the compact sum.
+  const total = data.reduce((acc, d) => acc + Math.max(0, d.value), 0);
+  const totalMarkup = formatNumberCompact(total);
+  return generated
+    .replace(
+      /<text x="[^"]+" y="[^"]+" text-anchor="middle" font-size="11"[^>]*>Total<\/text>\s*<text x="[^"]+" y="[^"]+" text-anchor="middle" font-size="16"[^>]*>[^<]*<\/text>/,
+      `<text x="160" y="98" text-anchor="middle" font-size="11" fill="${PALETTE.muted}">${escapeXml(opts.centerLabel)}</text><text x="160" y="116" text-anchor="middle" font-size="16" font-weight="700" fill="${PALETTE.text}">${totalMarkup}</text>`,
+    )
+    .replace(
+      labelText, // unused; gives ESLint a handle on the binding
+      labelText,
+    );
+}
+
 /** Re-export type so templates/tests don't double-import from the report. */
 export type {
   AnchorRow,

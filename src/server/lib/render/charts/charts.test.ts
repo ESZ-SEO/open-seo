@@ -3,10 +3,12 @@ import {
   placeholderSvg,
   renderAreaChart,
   renderBarPairChart,
+  renderDonutChart,
   renderLineChart,
   renderNetworkGraph,
   renderPieChart,
   renderRadarChart,
+  renderVennDiagram,
 } from "@/server/lib/render/charts/charts";
 import type {
   BacklinksGraphLink,
@@ -131,5 +133,52 @@ describe("charts · pure SVG helpers", () => {
     const svg = placeholderSvg("Hola <mundo>");
     expect(svg).toContain("&lt;mundo&gt;");
     expect(svg.startsWith("<svg")).toBe(true);
+  });
+});
+
+describe("charts · E2 venn + donut", () => {
+  it("renderVennDiagram returns three overlapping <circle>s + count labels", () => {
+    const svg = renderVennDiagram({
+      sets: [
+        { label: "primary.com", value: 1200, color: "#1f6feb" },
+        { label: "comp1.com", value: 540, color: "#14b8a6" },
+        { label: "comp2.com", value: 410, color: "#f59e0b" },
+      ],
+      pairs: [
+        { left: "primary.com", right: "comp1.com", value: 80 },
+        { left: "primary.com", right: "comp2.com", value: 60 },
+        { left: "comp1.com", right: "comp2.com", value: 0 },
+      ],
+      total: 2150,
+    });
+    expect(svg.startsWith("<svg")).toBe(true);
+    // Three rings.
+    const circles = (svg.match(/<circle /g) ?? []).length;
+    expect(circles).toBeGreaterThanOrEqual(3);
+    // Domain labels + pair intersection labels.
+    expect(svg).toContain("primary.com");
+    expect(svg).toContain("comp1.com");
+    expect(svg).toContain("comp2.com");
+    expect(svg).toContain("∩");
+  });
+
+  it("renderVennDiagram placeholder for empty sets", () => {
+    // No sets → no overlap math, fall back to placeholder.
+    expect(renderVennDiagram({ sets: [] })).toContain("Sin datos");
+  });
+
+  it("renderDonutChart reuses renderPieChart's hollow centre and accepts a centerLabel", () => {
+    const svg = renderDonutChart(
+      [
+        { name: "primary", value: 60 },
+        { name: "competitor-1", value: 30 },
+      ],
+      { width: 320, height: 240, centerLabel: "Tráfico" },
+    );
+    expect(svg.startsWith("<svg")).toBe(true);
+    expect(svg).toContain("Tráfico");
+    // Two slices.
+    const paths = (svg.match(/<path /g) ?? []).length;
+    expect(paths).toBeGreaterThanOrEqual(2);
   });
 });

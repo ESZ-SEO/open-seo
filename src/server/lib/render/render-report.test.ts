@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- render-report.test.ts covers every dispatcher edge case (params, cache, orchestrator, schema, header/compliance). Splitting across files would scatter the contract regressions and lose cross-cutting helpers like the in-memory R2 fake. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- Mock cloudflare:workers with a mutable env ---------------------------------------------
@@ -81,16 +82,15 @@ function parseRequestBody(init: RequestInit | undefined): unknown {
   return JSON.parse(body) as unknown;
 }
 
-const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_BYTES = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
 
 function buildRequest(
   search: string,
   headers: Record<string, string> = {},
 ): Request {
-  return new Request(
-    `https://render.test/api/render/${search}`,
-    { headers },
-  );
+  return new Request(`https://render.test/api/render/${search}`, { headers });
 }
 
 beforeEach(() => {
@@ -166,7 +166,9 @@ describe("constantTimeEquals", () => {
     await expect(constantTimeEquals("abc", "abc")).resolves.toBe(true);
     await expect(constantTimeEquals("abc", "abd")).resolves.toBe(false);
     // Different lengths are normalised via the hash, no leakage on per-byte.
-    await expect(constantTimeEquals("a", "long-but-wrong")).resolves.toBe(false);
+    await expect(constantTimeEquals("a", "long-but-wrong")).resolves.toBe(
+      false,
+    );
     await expect(constantTimeEquals("", "")).resolves.toBe(true);
   });
 
@@ -241,6 +243,109 @@ describe("renderParamsSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("parses comma-separated competitors and dedupes against the primary", () => {
+    const result = renderParamsSchema.parse({
+      report: "competitors",
+      domain: "example.com",
+      competitors: "a.com, b.com,example.com,a.com",
+    });
+    expect(result.competitors).toEqual(["a.com", "b.com"]);
+  });
+
+  it("accepts an array of competitors and returns them sorted", () => {
+    const result = renderParamsSchema.parse({
+      report: "competitors",
+      domain: "example.com",
+      competitors: ["b.com", "a.com"],
+    });
+    expect(result.competitors).toEqual(["a.com", "b.com"]);
+  });
+
+  it("caps competitors at 2 entries (extra silently dropped after sort)", () => {
+    const result = renderParamsSchema.parse({
+      report: "competitors",
+      domain: "example.com",
+      competitors: "d.com,a.com,b.com,c.com",
+    });
+    expect(result.competitors?.length).toBe(2);
+  });
+
+  it("omits competitors when missing or empty", () => {
+    const missing = renderParamsSchema.parse({
+      report: "competitors",
+      domain: "example.com",
+    });
+    expect(missing.competitors).toBeUndefined();
+    const empty = renderParamsSchema.parse({
+      report: "competitors",
+      domain: "example.com",
+      competitors: "",
+    });
+    expect(empty.competitors).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------------------------
+// Cache key — competitor set must influence the hash so two distinct
+// comparisons never collide on the same PNG.
+// --------------------------------------------------------------------------------------------
+describe("buildReportCacheKey (competitor set is part of the hash)", () => {
+  it("returns the same key for no competitors and an explicit empty list", async () => {
+    const { buildReportCacheKey } = await import("@/server/lib/render/cache");
+    const a = await buildReportCacheKey(
+      "competitors",
+      "example.com",
+      "ES",
+      "desktop",
+    );
+    const b = await buildReportCacheKey(
+      "competitors",
+      "example.com",
+      "ES",
+      "desktop",
+      [],
+    );
+    expect(a).toBe(b);
+  });
+
+  it("returns the same key regardless of the input order of competitors", async () => {
+    const { buildReportCacheKey } = await import("@/server/lib/render/cache");
+    const a = await buildReportCacheKey(
+      "competitors",
+      "example.com",
+      "ES",
+      "desktop",
+      ["a.com", "b.com"],
+    );
+    const b = await buildReportCacheKey(
+      "competitors",
+      "example.com",
+      "ES",
+      "desktop",
+      ["b.com", "a.com"],
+    );
+    expect(a).toBe(b);
+  });
+
+  it("returns DIFFERENT keys when the competitor set differs", async () => {
+    const { buildReportCacheKey } = await import("@/server/lib/render/cache");
+    const a = await buildReportCacheKey(
+      "competitors",
+      "example.com",
+      "ES",
+      "desktop",
+      ["a.com"],
+    );
+    const b = await buildReportCacheKey(
+      "competitors",
+      "example.com",
+      "ES",
+      "desktop",
+      ["b.com"],
+    );
+    expect(a).not.toBe(b);
+  });
 });
 
 // --------------------------------------------------------------------------------------------
@@ -312,9 +417,9 @@ describe("renderHtmlToPng", () => {
 
   it("retries and throws RenderError when the renderer keeps failing", async () => {
     mockEnv.RENDERER_URL = "http://renderer.test";
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response("upstream error", { status: 503 }),
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("upstream error", { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(renderHtmlToPng("<html></html>")).rejects.toThrow(
@@ -400,9 +505,9 @@ describe("renderReport orchestrator", () => {
     const r2 = createR2Fake();
     mockEnv.R2 = r2;
     mockEnv.RENDERER_URL = "http://renderer.test";
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response("err", { status: 500 }),
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("err", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(

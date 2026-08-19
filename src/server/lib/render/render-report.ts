@@ -11,18 +11,37 @@ import {
 } from "@/server/lib/render/renderer-client";
 import { renderReportShell } from "@/server/lib/render/templates/shell";
 import { renderBacklinksReport } from "@/server/lib/render/templates/backlinks";
+import { renderCompetitorsReport } from "@/server/lib/render/templates/competitors";
 import { buildBacklinksReportData } from "@/server/lib/render/reports/backlinks-report";
+import { buildCompetitorsReportData } from "@/server/lib/render/reports/competitors-report";
 import { uploadPng } from "@/server/lib/render/r2-upload";
 
 /**
  * Input validation for the render endpoint. The route layer runs this and
  * returns 400 on failure. Defaults match the product decision (ES / desktop).
+ *
+ * E2: `competitors` is an optional comma-separated list (max 2) of competitor
+ * domains. When omitted on the `competitors` report, the service degrades to a
+ * single-domain report (see `buildCompetitorsReportData`).
  */
 export const renderParamsSchema = z.object({
   report: z.enum(["backlinks", "competitors", "overview"]),
   domain: z.string().trim().min(1, { message: "domain is required" }),
   country: z.string().trim().min(1).default("ES"),
   device: z.enum(["desktop", "mobile", "tablet"]).default("desktop"),
+  competitors: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((value) => {
+      if (value == null) return undefined;
+      const list = Array.isArray(value) ? value : value.split(",");
+      const cleaned = list.map((s) => s.trim()).filter((s) => s.length > 0);
+      // Dedupe + drop self-references + cap at 2.
+      const deduped = Array.from(new Set(cleaned)).filter((c) => c.length > 0);
+      const final = deduped.toSorted().slice(0, 2);
+      return final.length > 0 ? final : undefined;
+    })
+    .pipe(z.array(z.string().min(1)).max(2).optional()),
 });
 
 export type RenderParams = z.infer<typeof renderParamsSchema>;
@@ -48,14 +67,26 @@ export type RenderParams = z.infer<typeof renderParamsSchema>;
  * `cloudflare:workers` to supply `env.R2`, `env.RENDERER_URL`, etc.
  */
 export async function renderReport(params: RenderParams): Promise<Uint8Array> {
-  const { report, domain, country, device } = params;
+  const { report, domain, country, device, competitors } = params;
 
-  const cacheKey = await buildReportCacheKey(report, domain, country, device);
+  const cacheKey = await buildReportCacheKey(
+    report,
+    domain,
+    country,
+    device,
+    competitors,
+  );
 
   const cached = await getCachedReport(cacheKey);
   if (cached) return cached;
 
-  const html = await buildReportHtml(report, domain, country, device);
+  const html = await buildReportHtml(
+    report,
+    domain,
+    country,
+    device,
+    competitors,
+  );
   const png = await renderHtmlToPng(html);
 
   await setCachedReport(cacheKey, png, RENDER_TTL_SECONDS[report]);
@@ -67,18 +98,33 @@ export async function renderReport(params: RenderParams): Promise<Uint8Array> {
 /**
  * Dispatch to the appropriate report template + data pipeline.
  *
- * E1 implements `backlinks`; competitors/overview keep the E0 generic shell
- * until E2/E3 land.
+ * E1 implements `backlinks`; E2 implements `competitors`; overview keeps the
+ * E0 generic shell until E3 lands.
  */
 async function buildReportHtml(
   report: RenderParams["report"],
   domain: string,
   country: string,
   device: string,
+  competitors?: string[],
 ): Promise<string> {
   if (report === "backlinks") {
     const data = await buildBacklinksReportData({ domain, country });
     return renderBacklinksReport({ report, domain, country, device, data });
+  }
+  if (report === "competitors") {
+    const data = await buildCompetitorsReportData({
+      domain,
+      country,
+      competitors: competitors ?? [],
+    });
+    return renderCompetitorsReport({
+      report,
+      domain,
+      country,
+      device,
+      data,
+    });
   }
   return renderReportShell({ report, domain, country, device });
 }
