@@ -35,7 +35,14 @@ app.post("/screenshot", async (c) => {
 
   try {
     const png = await renderHtmlToPng(body);
-    return new Response(png, {
+    // Uint8Array.buffer is typed ArrayBufferLike (ArrayBuffer | SharedArrayBuffer);
+    // only ArrayBuffer is a valid BodyInit, so narrow with a runtime check
+    // rather than an assertion (same pattern as the app's /api/render/$ route).
+    const view = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength);
+    if (!(view instanceof ArrayBuffer)) {
+      throw new Error("rendered PNG buffer is not an ArrayBuffer");
+    }
+    return new Response(view, {
       status: 200,
       headers: {
         "content-type": "image/png",
