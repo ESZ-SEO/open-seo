@@ -1,0 +1,65 @@
+name: Build & publish combined self-host image (render pipeline)
+
+# Builds Dockerfile.selfhost.render (app + renderer/Chrome in one image) on
+# GitHub's infrastructure — NOT on the Easypanel host — and pushes it to
+# GHCR. This is both the deploy artifact AND the build test: if `npm ci` /
+# `tsc` / the Docker build itself fails, this workflow fails loudly here,
+# in minutes, with the full log — instead of surfacing as an unreachable
+# Easypanel service with no way to see why.
+#
+# Easypanel then only needs to PULL and RUN the finished image (no on-server
+# build), which also removes the memory pressure of building on a shared VPS.
+
+on:
+  push:
+    branches:
+      - fork/main
+    paths:
+      - "renderer/**"
+      - "Dockerfile.selfhost.render"
+      - "docker-entrypoint.combined.sh"
+      - ".github/workflows/docker-image-render.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker:
+    if: github.repository == 'ESZ-SEO/open-seo'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/esz-seo/open-seo-render
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      # amd64 only — this image targets a standard x86_64 Easypanel VPS.
+      # Add linux/arm64 to platforms below if that ever changes.
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.selfhost.render
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
