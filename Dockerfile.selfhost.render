@@ -50,12 +50,16 @@ RUN apt-get update \
         xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# The base image's own `COPY . .` (in Dockerfile.selfhost) already placed
-# renderer/{src,package.json,package-lock.json,tsconfig.json} at /app/renderer
-# uninstalled — .dockerignore excludes **/node_modules and **/dist but not
-# renderer/ itself. Install + build in place; no re-COPY needed.
+# renderer/ is fork-only — it does NOT exist in every-app/open-seo upstream,
+# so it is never present in the published BASE_IMAGE (that image is built
+# from upstream's own tree). Copy it explicitly from THIS build's context
+# (the fork checkout) instead of assuming it's already there.
 WORKDIR /app/renderer
-RUN npm ci && npm run build && npm prune --omit=dev
+COPY renderer/package.json renderer/package-lock.json ./
+RUN npm ci
+COPY renderer/tsconfig.json ./
+COPY renderer/src ./src
+RUN npm run build && npm prune --omit=dev
 WORKDIR /app
 
 COPY docker-entrypoint.combined.sh ./
