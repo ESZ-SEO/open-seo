@@ -132,7 +132,7 @@ function makeFixture(): BacklinksReportData {
 }
 
 describe("renderBacklinksReport · template", () => {
-  it("produces a self-contained branded HTML document", () => {
+  it("produces a self-contained unbranded HTML document", () => {
     const html = renderBacklinksReport({
       report: "backlinks",
       domain: "example.com",
@@ -144,7 +144,8 @@ describe("renderBacklinksReport · template", () => {
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain('<html lang="es">');
     expect(html).toContain("<style>");
-    expect(html).toContain("open-seo");
+    expect(html).toContain("example.com");
+    expect(html).not.toContain("open-seo");
   });
 
   it("honours spec §2 — does not include Semrush brand or proprietary metric names", () => {
@@ -209,7 +210,7 @@ describe("renderBacklinksReport · template", () => {
     expect(html).toContain("Mejores anchors");
   });
 
-  it("renders 7 SVG fragments (one per chart) plus 2 donut SVGs", () => {
+  it("renders the 7 SVG chart fragments from the backlinks layout", () => {
     const html = renderBacklinksReport({
       report: "backlinks",
       domain: "example.com",
@@ -217,9 +218,9 @@ describe("renderBacklinksReport · template", () => {
       device: "desktop",
       data: makeFixture(),
     });
-    // 7 chart cards + 2 donut = 9 SVGs at minimum.
+    // 7 chart cards from Anexo A.3.
     const svgCount = (html.match(/<svg /g) ?? []).length;
-    expect(svgCount).toBeGreaterThanOrEqual(9);
+    expect(svgCount).toBeGreaterThanOrEqual(7);
   });
 
   it("inlines styles and does NOT load external CSS", () => {

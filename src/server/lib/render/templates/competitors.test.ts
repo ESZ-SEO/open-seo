@@ -57,7 +57,7 @@ function sampleData(
 }
 
 describe("renderCompetitorsReport", () => {
-  it("renders a self-contained branded HTML doc with the 3 KPI rows + chips", () => {
+  it("renders a self-contained unbranded HTML doc with the 3 KPI rows + chips", () => {
     const html = renderCompetitorsReport({
       report: "competitors",
       domain: "example.com",
@@ -67,7 +67,7 @@ describe("renderCompetitorsReport", () => {
     });
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain("<style>");
-    expect(html).toContain("open-seo");
+    expect(html).not.toContain("open-seo");
     expect(html).toContain("Comparación de dominios");
     expect(html).not.toMatch(/semrush/i);
     expect(html).toContain("example.com");

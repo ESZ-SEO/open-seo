@@ -74,7 +74,7 @@ function makeFixture(): OverviewReportData {
 }
 
 describe("renderOverviewReport · template", () => {
-  it("produces a self-contained branded HTML document", () => {
+  it("produces a self-contained unbranded HTML document", () => {
     const html = renderOverviewReport({
       report: "overview",
       domain: "example.com",
@@ -86,7 +86,8 @@ describe("renderOverviewReport · template", () => {
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain('<html lang="es">');
     expect(html).toContain("<style>");
-    expect(html).toContain("open-seo");
+    expect(html).toContain("example.com");
+    expect(html).not.toContain("open-seo");
   });
 
   it("honours spec §2 — no Semrush brand and renamed metric", () => {

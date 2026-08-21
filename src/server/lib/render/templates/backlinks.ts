@@ -13,7 +13,6 @@ import {
   renderBarPairChart,
   renderLineChart,
   renderNetworkGraph,
-  renderPieChart,
   renderRadarChart,
 } from "@/server/lib/render/charts/charts";
 
@@ -214,8 +213,6 @@ export function renderBacklinksReport({
 }: BacklinksTemplateInput): string {
   const title = REPORT_TITLES[report];
   const deviceLabel = DEVICE_LABELS[device] ?? device;
-  const generatedAt = new Date().toISOString();
-
   const tiles: Tile[] = [
     {
       label: "Puntuación de autoridad",
@@ -338,30 +335,6 @@ export function renderBacklinksReport({
         })
       : placeholderSvg("Sin histórico");
 
-  // Two simple pies for the types and attributes tables (we already have raw
-  // counts in the table; pie+table side-by-side gives the spec's donut look).
-  const typesPie =
-    data.tables.types.source === "ok" && data.tables.types.value.length > 0
-      ? renderPieChart(
-          data.tables.types.value.map((t) => ({
-            name: t.type,
-            value: t.count,
-          })),
-          { width: 280, height: 220 },
-        )
-      : placeholderSvg("Sin tipos");
-  const attributesPie =
-    data.tables.attributes.source === "ok" &&
-    data.tables.attributes.value.length > 0
-      ? renderPieChart(
-          data.tables.attributes.value.map((a) => ({
-            name: a.attribute,
-            value: a.count,
-          })),
-          { width: 280, height: 220 },
-        )
-      : placeholderSvg("Sin atributos");
-
   const categoriesTable = tableShell(
     "Categorías de dominios de referencia",
     ["Categoría", "Cantidad", "%"],
@@ -413,7 +386,6 @@ export function renderBacklinksReport({
     --muted: #6b7785;
     --border: #e4e9f0;
     --brand: #1f6feb;
-    --brand-dark: #0b3d91;
     --accent: #14b8a6;
     --warn: #ef4444;
     --warn-bg: #fff1f2;
@@ -425,21 +397,6 @@ export function renderBacklinksReport({
     background: var(--bg); color: var(--text); padding: 32px;
   }
   .shell { max-width: 1216px; margin: 0 auto; }
-  .header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: 20px; border-bottom: 1px solid var(--border);
-    margin-bottom: 24px;
-  }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand-mark {
-    width: 36px; height: 36px; border-radius: 9px;
-    background: linear-gradient(135deg, var(--brand), var(--brand-dark));
-    display: flex; align-items: center; justify-content: center;
-    color: #fff;
-  }
-  .brand-mark svg { width: 20px; height: 20px; }
-  .brand-name { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
-  .header-meta { font-size: 12px; color: var(--muted); text-align: right; }
   h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
   h2 { font-size: 16px; margin: 24px 0 12px; color: var(--text); }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
@@ -466,8 +423,6 @@ export function renderBacklinksReport({
   .tile-warn { background: var(--warn-bg); border-color: #fecaca; }
   .tile-warn .tile-label { color: var(--warn); }
 
-  .charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px; }
-  .charts-grid--third { grid-template-columns: 1fr 1fr; }
   .card {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px;
@@ -501,22 +456,6 @@ export function renderBacklinksReport({
 </head>
 <body>
   <div class="shell">
-    <div class="header">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="7"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-name">open-seo</div>
-          <div style="font-size:11px;color:var(--muted)">Informe SEO</div>
-        </div>
-      </div>
-      <div class="header-meta">Generado ${escapeHtml(generatedAt)}</div>
-    </div>
-
     <h1>${escapeHtml(title)}</h1>
     <div class="chips">
       <span class="chip">
@@ -537,16 +476,18 @@ export function renderBacklinksReport({
     <div class="tiles">${renderTiles(data.tiles, tiles)}</div>
 
     <h2>Visión general de autoridad</h2>
-    <div class="row-2">
+    <div class="row-3">
       ${chartCard("Radar de autoridad", "5 dimensiones", radarSvg)}
       ${chartCard("Tendencia de autoridad", "histórico 12 sem.", trendSvg)}
+      ${chartCard("Grafo de red", "Top dominios y spam score", networkSvg)}
     </div>
 
     <h2>Red de dominios de referencia</h2>
-    <div class="charts-grid">
-      ${chartCard("Grafo de red", "Top dominios y spam score", networkSvg)}
+    <div class="row-2">
       ${chartCard("Dominios en el tiempo", "área acumulada", refAreaSvg)}
       ${chartCard("Backlinks en el tiempo", "área acumulada", blAreaSvg)}
+    </div>
+    <div class="row-2">
       ${chartCard(
         "Nuevos vs perdidos (dominios)",
         "barras por período",
@@ -557,51 +498,20 @@ export function renderBacklinksReport({
         "barras por período",
         blBarsSvg,
       )}
-      <div class="card chart">
-        <div class="card-head">
-          <h3>Leyenda grafo de red</h3>
-          <span class="muted">color = spam score</span>
-        </div>
-        <div class="chart-body" style="flex-direction:column;align-items:flex-start;padding:0 18px;">
-          <div style="display:flex;gap:8px;align-items:center;font-size:12px;margin:4px 0;"><span style="width:14px;height:14px;border-radius:50%;background:#22c55e;display:inline-block;"></span> Limpio (&lt; 5%)</div>
-          <div style="display:flex;gap:8px;align-items:center;font-size:12px;margin:4px 0;"><span style="width:14px;height:14px;border-radius:50%;background:#84cc16;display:inline-block;"></span> Bajo (5–15%)</div>
-          <div style="display:flex;gap:8px;align-items:center;font-size:12px;margin:4px 0;"><span style="width:14px;height:14px;border-radius:50%;background:#f59e0b;display:inline-block;"></span> Medio (15–30%)</div>
-          <div style="display:flex;gap:8px;align-items:center;font-size:12px;margin:4px 0;"><span style="width:14px;height:14px;border-radius:50%;background:#fb923c;display:inline-block;"></span> Alto (30–50%)</div>
-          <div style="display:flex;gap:8px;align-items:center;font-size:12px;margin:4px 0;"><span style="width:14px;height:14px;border-radius:50%;background:#ef4444;display:inline-block;"></span> Crítico (≥ 50%)</div>
-        </div>
-      </div>
-    </div>
-
-    <h2>Distribución y composición del perfil de backlinks</h2>
-    <div class="row-2">
-      <div class="card chart">
-        <div class="card-head">
-          <h3>Tipos de backlinks</h3>
-          <span class="muted">donut</span>
-        </div>
-        <div class="chart-body">${typesPie}</div>
-      </div>
-      <div class="card chart">
-        <div class="card-head">
-          <h3>Atributos del enlace</h3>
-          <span class="muted">donut</span>
-        </div>
-        <div class="chart-body">${attributesPie}</div>
-      </div>
     </div>
 
     <h2>Tablas</h2>
     <div class="row-2">
       ${categoriesTable}
-      ${typesTable}
+      ${anchorsTable}
     </div>
     <div class="row-2">
+      ${typesTable}
       ${attributesTable}
-      ${anchorsTable}
     </div>
 
     <div class="footer">
-      <span>open-seo · Datos propios (DataForSEO)</span>
+      <span>Datos propios (DataForSEO)</span>
       <span>${escapeHtml(report)} · ${escapeHtml(country.toUpperCase())} · ${escapeHtml(deviceLabel)}</span>
     </div>
   </div>

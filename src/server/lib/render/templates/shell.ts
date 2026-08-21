@@ -54,7 +54,6 @@ export function renderReportShell({
 }: ReportShellInput): string {
   const title = REPORT_TITLES[report];
   const deviceLabel = DEVICE_LABELS[device] ?? device;
-  const generatedAt = new Date().toISOString();
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -70,7 +69,6 @@ export function renderReportShell({
     --muted: #6b7785;
     --border: #e4e9f0;
     --brand: #1f6feb;
-    --brand-dark: #0b3d91;
     --accent: #14b8a6;
   }
   * { box-sizing: border-box; }
@@ -82,19 +80,6 @@ export function renderReportShell({
     padding: 32px;
   }
   .shell { max-width: 1216px; margin: 0 auto; }
-  .header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 24px;
-  }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand-mark {
-    width: 36px; height: 36px; border-radius: 9px;
-    background: linear-gradient(135deg, var(--brand), var(--brand-dark));
-    display: flex; align-items: center; justify-content: center; color: #fff;
-  }
-  .brand-mark svg { width: 20px; height: 20px; }
-  .brand-name { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
-  .header-meta { font-size: 12px; color: var(--muted); text-align: right; }
   h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
   .chip {
@@ -129,22 +114,6 @@ export function renderReportShell({
 </head>
 <body>
   <div class="shell">
-    <div class="header">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="7"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-name">open-seo</div>
-          <div style="font-size:11px;color:var(--muted)">Informe SEO</div>
-        </div>
-      </div>
-      <div class="header-meta">Generado ${escapeHtml(generatedAt)}</div>
-    </div>
-
     <h1>${escapeHtml(title)}</h1>
     <div class="chips">
       <span class="chip">
@@ -201,7 +170,7 @@ export function renderReportShell({
     </div>
 
     <div class="footer">
-      <span>open-seo · Datos propios (DataForSEO)</span>
+      <span>Datos propios (DataForSEO)</span>
       <span>${escapeHtml(report)} · ${escapeHtml(country.toUpperCase())} · ${escapeHtml(deviceLabel)}</span>
     </div>
   </div>

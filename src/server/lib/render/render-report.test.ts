@@ -591,7 +591,7 @@ describe("renderReport orchestrator", () => {
 // Template (brand compliance — no Semrush assets, renamed metric)
 // --------------------------------------------------------------------------------------------
 describe("renderReportShell", () => {
-  it("renders a self-contained branded shell with renamed metric and no external CSS", () => {
+  it("renders a self-contained unbranded shell with renamed metric and no external CSS", () => {
     const html = renderReportShell({
       report: "backlinks",
       domain: "example.com",
@@ -601,7 +601,7 @@ describe("renderReportShell", () => {
 
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain("<style>"); // inline styles, no external bundle
-    expect(html).toContain("open-seo"); // own brand
+    expect(html).not.toContain("open-seo"); // no own brand either — spec §2
     expect(html).toContain("Puntuación de autoridad"); // renamed proprietary metric
     expect(html).not.toMatch(/semrush/i); // no Semrush brand/assets
     expect(html).toContain("example.com");

@@ -177,8 +177,6 @@ export function renderOverviewReport({
 }: OverviewTemplateInput): string {
   const title = REPORT_TITLES[report];
   const deviceLabel = DEVICE_LABELS[device] ?? device;
-  const generatedAt = new Date().toISOString();
-
   const tiles: Tile[] = [
     {
       label: "Puntuación de autoridad",
@@ -277,7 +275,6 @@ export function renderOverviewReport({
     --muted: #6b7785;
     --border: #e4e9f0;
     --brand: #1f6feb;
-    --brand-dark: #0b3d91;
     --accent: #14b8a6;
     --warn: #ef4444;
     --warn-bg: #fff1f2;
@@ -289,21 +286,6 @@ export function renderOverviewReport({
     background: var(--bg); color: var(--text); padding: 32px;
   }
   .shell { max-width: 1216px; margin: 0 auto; }
-  .header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-bottom: 20px; border-bottom: 1px solid var(--border);
-    margin-bottom: 24px;
-  }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand-mark {
-    width: 36px; height: 36px; border-radius: 9px;
-    background: linear-gradient(135deg, var(--brand), var(--brand-dark));
-    display: flex; align-items: center; justify-content: center;
-    color: #fff;
-  }
-  .brand-mark svg { width: 20px; height: 20px; }
-  .brand-name { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
-  .header-meta { font-size: 12px; color: var(--muted); text-align: right; }
   h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
   h2 { font-size: 16px; margin: 24px 0 12px; color: var(--text); }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
@@ -349,6 +331,7 @@ export function renderOverviewReport({
     display: grid; grid-template-columns: 320px 1fr; gap: 16px;
     margin-bottom: 24px;
   }
+  .layout-column { display: flex; flex-direction: column; gap: 16px; }
   .card {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px;
@@ -391,22 +374,6 @@ export function renderOverviewReport({
 </head>
 <body>
   <div class="shell">
-    <div class="header">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="7"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-name">open-seo</div>
-          <div style="font-size:11px;color:var(--muted)">Informe SEO</div>
-        </div>
-      </div>
-      <div class="header-meta">Generado ${escapeHtml(generatedAt)}</div>
-    </div>
-
     <h1>${escapeHtml(title)}: <span style="font-weight:500;color:var(--muted)">${escapeHtml(domain)}</span></h1>
     <div class="chips">
       <span class="chip">
@@ -434,7 +401,8 @@ export function renderOverviewReport({
     <div class="tiles">${renderTiles(tiles)}</div>
 
     <div class="layout">
-      <div class="card">
+      <div class="layout-column">
+        <div class="card">
         <div class="card-head">
           <h3>Distribución por países</h3>
           <span class="muted">tráfico y kws</span>
@@ -449,9 +417,9 @@ export function renderOverviewReport({
           <tbody>${countriesRows}</tbody>
         </table>
         <div class="chart-foot">⚠️ cuota = tráfico del país / tráfico mundial</div>
-      </div>
+        </div>
 
-      <div class="card">
+        <div class="card">
         <div class="card-head">
           <h3>Temas clave</h3>
           <span class="muted">pendiente E3.3</span>
@@ -460,31 +428,32 @@ export function renderOverviewReport({
           <div class="topic-help">Consulta los temas clave de ${escapeHtml(domain)}</div>
           <p class="muted" style="margin-top:12px;font-size:12px;">Ver temas</p>
         </div>
+        </div>
       </div>
-    </div>
 
-    <h2>Tráfico orgánico</h2>
-    <div class="card chart">
-      <div class="card-head">
-        <h3>Tráfico orgánico (histórico)</h3>
-        <span class="muted">2 años · 1M / 6M / 1A / 2A / Todo</span>
-      </div>
-      <div class="chart-body">${trendSvg}</div>
-      <div class="chart-foot">⚠️ histórico se acumula desde el primer render (E3.4)</div>
-    </div>
+      <div class="layout-column">
+        <div class="card chart">
+          <div class="card-head">
+            <h3>Tráfico orgánico (histórico)</h3>
+            <span class="muted">2 años · 1M / 6M / 1A / 2A / Todo</span>
+          </div>
+          <div class="chart-body">${trendSvg}</div>
+          <div class="chart-foot">⚠️ histórico se acumula desde el primer render (E3.4)</div>
+        </div>
 
-    <h2>Palabras clave orgánicas</h2>
-    <div class="card chart">
-      <div class="card-head">
-        <h3>Distribución por bucket</h3>
-        <span class="muted">Top 3 · 4–10 · 11–20 · 21–50 · 51–100 · SERP</span>
+        <div class="card chart">
+          <div class="card-head">
+            <h3>Palabras clave orgánicas · Distribución por bucket</h3>
+            <span class="muted">Top 3 · 4–10 · 11–20 · 21–50 · 51–100 · SERP</span>
+          </div>
+          <div class="chart-body">${bucketsSvg}</div>
+          <div class="chart-foot">Total ${NUMBER_FMT.format(keywordTotal)} kws muestreadas (${NUMBER_FMT.format(200)} máx.)</div>
+        </div>
       </div>
-      <div class="chart-body">${bucketsSvg}</div>
-      <div class="chart-foot">Total ${NUMBER_FMT.format(keywordTotal)} kws muestreadas (${NUMBER_FMT.format(200)} máx.)</div>
     </div>
 
     <div class="footer">
-      <span>open-seo · Datos propios (DataForSEO)</span>
+      <span>Datos propios (DataForSEO)</span>
       <span>${escapeHtml(report)} · ${escapeHtml(country.toUpperCase())} · ${escapeHtml(deviceLabel)}</span>
     </div>
   </div>
