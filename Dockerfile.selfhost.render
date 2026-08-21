@@ -72,6 +72,19 @@ WORKDIR /app
 # route was never compiled in. Overwrite the base image's src/ with this
 # fork's own — same fix pattern as the renderer/ copy above, just scoped to
 # the app side of the same feature instead of the microservice side.
+#
+# `COPY <dir> <dest>` does NOT replace an existing destination directory, it
+# MERGES into it — files already in BASE_IMAGE's /app/src that this fork's
+# src/ doesn't also have are left untouched. That is safe only as long as
+# fork/main and BASE_IMAGE:latest are in sync. When upstream ships a release
+# fork/main hasn't merged yet (e.g. BASE_IMAGE picks up a new upstream file
+# that imports from a schema module this fork's own, older version of that
+# same-named file no longer — or doesn't yet — export), the merge produces an
+# inconsistent hybrid tree: Rollup fails to resolve the import, the container
+# never finishes building, and it crash-loops forever under the restart
+# policy. `rm -rf` first so this is always a clean replace — the image always
+# runs exactly fork/main's own `src/`, never a mix.
+RUN rm -rf src
 COPY src ./src
 
 # The published BASE_IMAGE ships upstream's own tsconfig.json, which does NOT
