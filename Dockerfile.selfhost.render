@@ -62,6 +62,18 @@ COPY renderer/src ./src
 RUN npm run build && npm prune --omit=dev
 WORKDIR /app
 
+# The /api/render/ endpoint itself (route handler, render-report service,
+# templates, auth, R2 cache — everything under src/routes/api/render/ and
+# src/server/lib/render/) is ALSO fork-only, same as renderer/ above: it was
+# never merged upstream (verified via `git log upstream/main -- src/routes/api/render/`
+# — zero commits), so the published BASE_IMAGE's /app/src does not contain it
+# either. Without this, the container builds and boots fine (health check
+# passes) but every request to /api/render/ 404s to the SPA shell, since the
+# route was never compiled in. Overwrite the base image's src/ with this
+# fork's own — same fix pattern as the renderer/ copy above, just scoped to
+# the app side of the same feature instead of the microservice side.
+COPY src ./src
+
 # The published BASE_IMAGE ships upstream's own tsconfig.json, which does NOT
 # exclude renderer/**/* (upstream doesn't know that directory exists). The
 # app's own startup build (docker-entrypoint.sh -> `pnpm run build` ->
