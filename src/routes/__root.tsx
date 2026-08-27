@@ -62,6 +62,13 @@ export const Route = createRootRoute({
     links: [
       { rel: "stylesheet", href: appCss },
       {
+        rel: "preload",
+        href: "/fonts/inter-variable-latin.woff2",
+        as: "font",
+        type: "font/woff2",
+        crossOrigin: "anonymous",
+      },
+      {
         rel: "apple-touch-icon",
         sizes: "180x180",
         href: "/apple-touch-icon.png",
