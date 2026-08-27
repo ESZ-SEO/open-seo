@@ -26,9 +26,12 @@ import {
  *   - Tabs row: Visión general / Comparación de dominios / Crecimiento /
  *     Comparación por países (decorative — only the first is "active", the
  *     others are placeholders for the future, consistent with the spec).
- *   - 5 tiles + 4 sub-stats in the leading row, matching Semrush's Domain
- *     Overview (Puntuación autoridad, Tráfico orgánico, Tráfico de pago,
- *     Backlinks, Cuota de tráfico).
+ *   - 5 tiles in the leading row, matching Semrush's Domain Overview 2026:
+ *     Puntuación autoridad (with degraded semi-donut gauge), Tráfico orgánico,
+ *     Tráfico de pago, Cuota de tráfico, Backlinks. Tiles are columns inside
+ *     one shared container separated by 1px vertical dividers (not 5 bordered
+ *     cards) — see `.dev/specs/semrush-redesign-2026-findings.md` §"Qué SÍ
+ *     hacer ahora".
  *   - Sidebar (left): "Distribución por países" table + "Temas clave"
  *     placeholder card (the dedicated topics endpoint is out of scope for E3).
  *   - Main column: "Tráfico orgánico" line chart (E3.4 stub today →
@@ -93,6 +96,47 @@ const ICONS = {
   share: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>`,
 } as const;
 
+/* ----------------------------- Authority semidonut ----------------------------- */
+
+/**
+ * Degraded semi-donut gauge for the Puntuación de autoridad tile. The two
+ * stops are the oklch tones confirmed in the Semrush 2026 dump
+ * (`.dev/specs/semrush-redesign-2026-findings.md` §"Authority Score"). The
+ * SVG is hand-rolled — no new dependency, same inline-SVG pattern as
+ * `ICONS.*`. Value is 0–100; we draw the filled arc proportional to it.
+ */
+function renderAuthoritySemidonut(value: number): string {
+  const clamped = Math.max(0, Math.min(100, value));
+  // Geometry: half-donut opening downward (semicircle on the top half).
+  // viewBox 0..120 × 0..72 — radius 52, center (60, 60), arc from 180° to 0°.
+  const r = 52;
+  const cx = 60;
+  const cy = 60;
+  // Path for a full half-circle (180° → 0°) using arc flags large-arc=0, sweep=1.
+  const fullHalf = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
+  // Sweep length proportional to value (0..100 → 0..180°).
+  const sweepDeg = (clamped / 100) * 180;
+  const endAngleRad = (Math.PI * (180 - sweepDeg)) / 180;
+  const ex = cx + r * Math.cos(endAngleRad);
+  const ey = cy - r * Math.sin(endAngleRad);
+  const largeArc = sweepDeg > 180 ? 1 : 0;
+  const valueArc =
+    sweepDeg <= 0
+      ? ""
+      : `M ${cx - r} ${cy} A ${r} ${r} 0 ${largeArc} 1 ${ex.toFixed(2)} ${ey.toFixed(2)}`;
+  // Track (background half-donut) underneath, very light.
+  return `<svg class="authority-arc" viewBox="0 0 120 72" width="80" height="48" aria-hidden="true">
+    <defs>
+      <linearGradient id="authority-grad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="oklch(0.53 0.157 279.2)" />
+        <stop offset="100%" stop-color="oklch(0.53 0.142 170)" />
+      </linearGradient>
+    </defs>
+    <path d="${fullHalf}" fill="none" stroke="#e4e9f0" stroke-width="8" stroke-linecap="round" />
+    ${valueArc ? `<path d="${valueArc}" fill="none" stroke="url(#authority-grad)" stroke-width="8" stroke-linecap="round" />` : ""}
+  </svg>`;
+}
+
 /* ----------------------------- Tiles ----------------------------- */
 
 type Tile = {
@@ -101,15 +145,16 @@ type Tile = {
   sub: string;
   icon: string;
   warning?: boolean;
-  width?: "normal" | "wide";
+  gauge?: string;
 };
 
 function renderTiles(tiles: Tile[]): string {
   return tiles
     .map(
       (t) => `
-    <div class="tile ${t.warning ? "tile-warn" : ""} ${t.width === "wide" ? "tile-wide" : ""}">
+    <div class="tile ${t.warning ? "tile-warn" : ""}">
       <div class="tile-label">${t.icon}${escapeHtml(t.label)}</div>
+      ${t.gauge ? `<div class="tile-gauge">${t.gauge}</div>` : ""}
       <div class="tile-value">${escapeHtml(t.value)}</div>
       <div class="tile-sub">${escapeHtml(t.sub)}</div>
     </div>`,
@@ -190,6 +235,11 @@ export function renderOverviewReport({
           : ""
       }`,
       icon: ICONS.authority,
+      gauge:
+        data.tiles.authority.source === "ok" &&
+        data.tiles.authority.value != null
+          ? renderAuthoritySemidonut(data.tiles.authority.value)
+          : "",
     },
     {
       label: "Tráfico orgánico",
@@ -214,16 +264,6 @@ export function renderOverviewReport({
       warning: data.tiles.paidTraffic.source === "error",
     },
     {
-      label: "Backlinks",
-      value: fmtNumber(data.tiles.backlinks.value),
-      sub:
-        data.tiles.referringDomains.value != null
-          ? `Dominios de ref. ${NUMBER_FMT.format(data.tiles.referringDomains.value)}`
-          : "totales registrados por DataForSEO",
-      icon: ICONS.backlinks,
-      warning: data.tiles.backlinks.source === "error",
-    },
-    {
       label: "Cuota de tráfico",
       value:
         data.tiles.trafficShare.value != null
@@ -234,6 +274,16 @@ export function renderOverviewReport({
           ? `Competidores ${NUMBER_FMT.format(data.tiles.competitorsCount.value)}`
           : "tráfico del país vs el mundo",
       icon: ICONS.share,
+    },
+    {
+      label: "Backlinks",
+      value: fmtNumber(data.tiles.backlinks.value),
+      sub:
+        data.tiles.referringDomains.value != null
+          ? `Dominios de ref. ${NUMBER_FMT.format(data.tiles.referringDomains.value)}`
+          : "totales registrados por DataForSEO",
+      icon: ICONS.backlinks,
+      warning: data.tiles.backlinks.source === "error",
     },
   ];
 
@@ -310,21 +360,31 @@ export function renderOverviewReport({
     border-bottom-color: var(--brand);
   }
 
-  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
-  .tile {
+  .tiles {
+    display: flex; align-items: stretch;
     background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 16px 16px 14px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+    overflow: hidden;
   }
-  .tile-wide { grid-column: span 2; }
+  .tile {
+    flex: 0 0 auto; width: 150px;
+    padding: 14px 14px 12px;
+    border-right: 1px solid var(--border);
+    position: relative;
+  }
+  .tile:last-child { border-right: 0; }
   .tile-label {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 11px; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    margin-bottom: 8px;
   }
-  .tile-label svg { color: var(--brand); }
-  .tile-value { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
-  .tile-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
-  .tile-warn { background: var(--warn-bg); border-color: #fecaca; }
+  .tile-label svg { color: var(--brand); width: 14px; height: 14px; }
+  .tile-gauge { margin: 4px 0 2px; }
+  .tile-gauge svg { display: block; }
+  .tile-value { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+  .tile-sub { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.3; }
+  .tile-warn { background: var(--warn-bg); }
   .tile-warn .tile-label { color: var(--warn); }
 
   .layout {
@@ -334,7 +394,7 @@ export function renderOverviewReport({
   .layout-column { display: flex; flex-direction: column; gap: 16px; }
   .card {
     background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 18px;
+    border-radius: 8px; padding: 18px;
   }
   .card-head {
     display: flex; align-items: baseline; justify-content: space-between;
