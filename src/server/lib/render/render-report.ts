@@ -12,7 +12,10 @@ import {
 import { renderReportShell } from "@/server/lib/render/templates/shell";
 import { renderBacklinksReport } from "@/server/lib/render/templates/backlinks";
 import { renderCompetitorsReport } from "@/server/lib/render/templates/competitors";
-import { renderOverviewReport } from "@/server/lib/render/templates/overview";
+import {
+  overviewFlagCodes,
+  renderOverviewReport,
+} from "@/server/lib/render/templates/overview";
 import { buildBacklinksReportData } from "@/server/lib/render/reports/backlinks-report";
 import { buildCompetitorsReportData } from "@/server/lib/render/reports/competitors-report";
 import { buildOverviewReportData } from "@/server/lib/render/reports/overview-report";
@@ -134,12 +137,16 @@ async function buildReportHtml(
   }
   if (report === "overview") {
     const data = await buildOverviewReportData({ domain, country });
-    // Only the distribution table draws flags, so only its codes get loaded —
-    // that's what keeps the flag set off the worker's startup graph.
+    // Only the codes this report can actually draw get loaded — that's what
+    // keeps the 174 kB flag set off the worker's startup graph. The list comes
+    // from the template so the two can't drift apart.
     const flags = await loadCountryFlags(
-      data.tables.countries.source === "ok"
-        ? data.tables.countries.value.map((row) => row.countryCode)
-        : [],
+      overviewFlagCodes(
+        country,
+        data.tables.countries.source === "ok"
+          ? data.tables.countries.value
+          : [],
+      ),
     );
     return renderOverviewReport({
       report,

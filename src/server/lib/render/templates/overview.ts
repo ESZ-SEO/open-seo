@@ -203,6 +203,65 @@ function countryDisplayLabel(row: CountryRow): string {
     : row.countryLabel;
 }
 
+/* ----------------------------- Quick markets ----------------------------- */
+
+/**
+ * The market shortcuts the reference puts at the head of the filter row.
+ *
+ * Decorative, like every other control on this page: the output is a
+ * screenshot, so these show the markets the product covers with the report's
+ * own market highlighted — they are not a switch anybody can throw.
+ *
+ * `GB` is the ISO code the flag artwork is keyed by; "UK" is what the
+ * reference labels it.
+ */
+const QUICK_MARKETS = [
+  { code: "WW", label: "Worldwide" },
+  { code: "US", label: "US" },
+  { code: "GB", label: "UK" },
+  { code: "ES", label: "ES" },
+] as const;
+
+/** The shortcut list for one report. A report whose market isn't one of the
+ *  defaults appends it, because the row's whole job is to show which market is
+ *  active — a highlighted pill that isn't there highlights nothing. */
+function quickMarkets(countryCode: string): { code: string; label: string }[] {
+  return QUICK_MARKETS.some((m) => m.code === countryCode)
+    ? [...QUICK_MARKETS]
+    : [...QUICK_MARKETS, { code: countryCode, label: countryCode }];
+}
+
+/**
+ * Every ISO code this template can draw a flag for, given a report.
+ *
+ * The caller resolves the artwork and passes it in (see
+ * {@link OverviewTemplateInput.flags}), so caller and template have to agree
+ * on the list. Deriving it here is what stops a new flag slot from silently
+ * rendering blank the way the country column once did.
+ */
+export function overviewFlagCodes(
+  country: string,
+  countries: CountryRow[],
+): string[] {
+  return [
+    ...quickMarkets(country.toUpperCase()).map((m) => m.code),
+    ...countries.map((row) => row.countryCode),
+  ];
+}
+
+function quickMarketPills(
+  countryCode: string,
+  flags: Record<string, string>,
+): string {
+  const pills = quickMarkets(countryCode)
+    .map(
+      (m) =>
+        `<span class="pill${m.code === countryCode ? " pill--active" : ""}">${countryFlagIcon(m.code, flags)}${escapeHtml(m.label)}</span>`,
+    )
+    .join("");
+  return `<div class="markets">${pills}<span class="pill pill--more">…</span></div>`;
+}
+
 /* ----------------------------- Icons ----------------------------- */
 
 const ICONS = {
@@ -793,6 +852,20 @@ export function renderOverviewReport({
   .chip--active { background: var(--brand-soft); border-color: transparent; color: var(--brand); }
   .chip--active svg { color: var(--brand); }
 
+  /* Market shortcuts sit tighter than the other filters and carry no chrome
+     until one is active — the reference reads as a row of labels with a single
+     lavender pill on it, not four boxed buttons. */
+  .markets { display: inline-flex; align-items: center; gap: 2px; margin-right: 6px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; height: 26px;
+    padding: 0 8px; border-radius: 4px; font-size: 12.5px; font-weight: 500;
+    color: var(--text); white-space: nowrap;
+  }
+  .pill svg { width: 13px; height: 13px; color: var(--muted); }
+  .pill--active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .pill--active svg { color: var(--brand); }
+  .pill--more { color: var(--muted); letter-spacing: 1px; padding: 0 6px; }
+
   .tabs {
     display: flex; gap: 18px; border-bottom: 1px solid var(--border);
     margin-bottom: var(--gap);
@@ -1003,7 +1076,7 @@ export function renderOverviewReport({
     </div>
 
     <div class="filters">
-      <span class="chip chip--active">${countryFlag || ICONS.globe}${escapeHtml(countryCode)}</span>
+      ${quickMarketPills(countryCode, flags)}
       <span class="chip">${ICONS.device}${escapeHtml(deviceLabel)} ${ICONS.chevron}</span>
       <span class="chip">${escapeHtml(generatedDate)} ${ICONS.chevron}</span>
       <span class="chip">USD ${ICONS.chevron}</span>

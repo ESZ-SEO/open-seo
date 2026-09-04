@@ -3,7 +3,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { renderOverviewReport } from "@/server/lib/render/templates/overview";
+import {
+  overviewFlagCodes,
+  renderOverviewReport,
+} from "@/server/lib/render/templates/overview";
 import type {
   BucketTrendPoint,
   OverviewReportData,
@@ -75,12 +78,14 @@ async function main() {
     country: "es",
     device: "desktop",
     data,
-    flags: await loadCountryFlags([
-      ...(data.tables.countries.source === "ok"
-        ? data.tables.countries.value.map((row) => row.countryCode)
-        : []),
-      "ES",
-    ]),
+    flags: await loadCountryFlags(
+      overviewFlagCodes(
+        "es",
+        data.tables.countries.source === "ok"
+          ? data.tables.countries.value
+          : [],
+      ),
+    ),
   });
   await screenshot(html, OUTPUT_PATH, {
     width: PARITY_VIEWPORT.width,

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ES, US } from "country-flag-icons/string/3x2";
 import {
+  overviewFlagCodes,
   renderOverviewReport,
   type OverviewTemplateInput,
 } from "@/server/lib/render/templates/overview";
@@ -159,6 +160,48 @@ describe("renderOverviewReport · template", () => {
     // The reference bar has no "Domain Comparison" — it belongs to another
     // view (NAV-01).
     expect(html).not.toContain("Domain Comparison");
+  });
+
+  it("highlights the report's own market among the quick-market pills", () => {
+    const html = render({ country: "ES" });
+    expect(html).toContain("Worldwide");
+    expect(html).toContain(">UK<");
+    expect(html).toContain('class="pill pill--active">');
+    // Exactly one pill may be active — two would claim the report covers two
+    // markets at once.
+    expect(html.match(/class="pill pill--active"/g)).toHaveLength(1);
+  });
+
+  it("appends the report's market when it is not one of the defaults", () => {
+    // A pill row that highlights nothing is a pill row that lies about scope.
+    const html = render({ country: "MX" });
+    expect(html).toContain('class="pill pill--active">');
+    expect(html.match(/class="pill pill--active"/g)).toHaveLength(1);
+    expect(html).toContain(">MX<");
+  });
+
+  it("asks the caller for every flag it can draw", () => {
+    // The template can't load artwork itself, so a slot the caller never
+    // resolves renders blank — this list is the contract between the two.
+    const codes = overviewFlagCodes("MX", [
+      {
+        countryCode: "WW",
+        countryLabel: "x",
+        share: 1,
+        traffic: 1,
+        keywords: 1,
+      },
+      {
+        countryCode: "MX",
+        countryLabel: "MX",
+        share: 1,
+        traffic: 1,
+        keywords: 1,
+      },
+    ]);
+    expect(codes).toEqual(
+      expect.arrayContaining(["WW", "US", "GB", "ES", "MX"]),
+    );
   });
 
   it("renders the domain query bar with the analysed domain", () => {
