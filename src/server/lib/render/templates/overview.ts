@@ -981,15 +981,22 @@ export function renderOverviewReport({
   .chip--active { background: var(--brand-surface); border-color: transparent; color: var(--brand); }
   .chip--active svg { color: var(--brand); }
 
-  /* Market shortcuts sit tighter than the other filters and carry no chrome
-     until one is active — the reference reads as a row of labels with a single
-     lavender pill on it, not four boxed buttons. */
-  .markets { display: inline-flex; align-items: center; gap: 2px; margin-right: 6px; }
+  /* The markets are one segmented control, not four loose labels: a single
+     bordered container with hairline dividers between the items, and the
+     active market highlighted *inside* it (HDR-03 / design review H10). The
+     pills are 24px so the container plus its border matches the 26px chips
+     standing next to it. */
+  .markets {
+    display: inline-flex; align-items: center; margin-right: 6px;
+    background: var(--card); border: 1px solid #d6d8dc; border-radius: 4px;
+    overflow: hidden;
+  }
   .pill {
-    display: inline-flex; align-items: center; gap: 5px; height: 26px;
-    padding: 0 8px; border-radius: 4px; font-size: 12.5px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 5px; height: 24px;
+    padding: 0 8px; font-size: 12.5px; font-weight: 500;
     color: var(--text); white-space: nowrap;
   }
+  .pill + .pill { border-left: 1px solid #d6d8dc; }
   .pill svg { width: 13px; height: 13px; color: var(--muted); }
   .pill--active { background: var(--brand-surface); color: var(--brand); font-weight: 600; }
   .pill--active svg { color: var(--brand); }
