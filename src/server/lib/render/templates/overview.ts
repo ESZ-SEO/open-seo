@@ -1133,6 +1133,18 @@ export function renderOverviewReport({
   .chart-block h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
   .chart-body { display: block; }
   .chart-body svg { width: 100%; height: auto; }
+  /* Keywords is the one block whose two states draw at different heights (the
+     stacked area is ${CHART_HEIGHT}px tall, today's distribution bar
+     ${BAR_CHART_HEIGHT}px). The slot is pinned to the area's aspect so the
+     shorter state sits inside it instead of pulling the bottom grid ~100px up
+     the page — the reflow VIS-03 exists to prevent. Aspect rather than a fixed
+     height because the SVG scales with the column, so the two have to be
+     expressed in the same terms. */
+  .chart-body--keywords {
+    display: flex; align-items: center;
+    aspect-ratio: ${CHART_WIDTH} / ${CHART_HEIGHT};
+  }
+  .chart-body--keywords svg { flex: 1; }
   .chart-foot { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
 
   /* ---------- bottom grid ---------- */
@@ -1295,7 +1307,7 @@ export function renderOverviewReport({
           </div>
           <div class="chart-block">
             <h3>Keywords</h3>
-            <div class="chart-body">${keywords.svg}</div>
+            <div class="chart-body chart-body--keywords">${keywords.svg}</div>
             <div class="chart-foot">${escapeHtml(keywords.foot)}</div>
           </div>
         </div>
