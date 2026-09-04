@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { ES, US } from "country-flag-icons/string/3x2";
-import { renderOverviewReport } from "@/server/lib/render/templates/overview";
+import {
+  renderOverviewReport,
+  type OverviewTemplateInput,
+} from "@/server/lib/render/templates/overview";
 import type {
   BucketTrendPoint,
   CountryRow,
@@ -63,6 +66,19 @@ function makeFixture(): OverviewReportData {
     },
     tables: {
       countries: { value: countries, source: "ok" },
+      topKeywords: {
+        value: [
+          {
+            keyword: "example keyword",
+            intent: "informational",
+            position: 3,
+            volume: 1300,
+            cpc: 0.89,
+            traffic: 92.99,
+          },
+        ],
+        source: "ok",
+      },
     },
     charts: {
       trafficTrend: {
@@ -94,16 +110,23 @@ function makeFixture(): OverviewReportData {
   };
 }
 
+/** The call every test makes. Only the parts a test actually varies are
+ *  spelled out at the call site. */
+function render(overrides: Partial<OverviewTemplateInput> = {}): string {
+  return renderOverviewReport({
+    report: "overview",
+    domain: "example.com",
+    country: "ES",
+    device: "desktop",
+    flags: {},
+    data: makeFixture(),
+    ...overrides,
+  });
+}
+
 describe("renderOverviewReport · template", () => {
   it("produces a self-contained unbranded HTML document", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render();
 
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain('<html lang="en">');
@@ -113,27 +136,13 @@ describe("renderOverviewReport · template", () => {
   });
 
   it("honours spec §2 — no Semrush brand and renamed metric", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render();
     expect(html).not.toMatch(/semrush/i);
     expect(html).toContain("Authority Score");
   });
 
   it("renders the tile labels from spec A.1", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render();
     expect(html).toContain("Authority Score");
     expect(html).toContain("Organic Traffic");
     expect(html).toContain("Paid Traffic");
@@ -141,78 +150,89 @@ describe("renderOverviewReport · template", () => {
     expect(html).toContain("Traffic Share");
   });
 
-  it("renders the tab strip with Overview as the active tab", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+  it("renders the three reference tabs with Overview active", () => {
+    const html = render();
     expect(html).toContain('class="tab active"');
     expect(html).toContain(">Overview<");
-    expect(html).toContain("Domain Comparison");
-    expect(html).toContain("Growth");
-    expect(html).toContain("Country Comparison");
+    expect(html).toContain("Growth report");
+    expect(html).toContain("Compare by countries");
+    // The reference bar has no "Domain Comparison" — it belongs to another
+    // view (NAV-01).
+    expect(html).not.toContain("Domain Comparison");
   });
 
-  it("renders exactly two card surfaces — SEO and the unified section", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
-    // The reference page has 3 cards (AI Search, SEO, #widgetDistribution);
-    // AI Search is out of scope, so the country table, topics placeholder and
-    // both charts must live inside the single lower section — not in cards of
-    // their own (design review H1).
-    expect(html.match(/class="card /g)).toHaveLength(2);
-    expect(html).toContain('class="card section"');
-    expect(html).not.toContain('class="layout"');
+  it("renders the domain query bar with the analysed domain", () => {
+    const html = render();
+    expect(html).toContain('class="query-input"');
+    expect(html).toContain("Root Domain");
+    expect(html).toContain(">Analyze<");
+  });
+
+  it("splits the KPI row into an AI Search card that claims no numbers", () => {
+    const html = render();
+    // The card exists so the 1fr/2fr row survives, but nothing feeds it: no
+    // engine row may carry a figure.
+    expect(html).toContain("AI Visibility");
+    expect(html).toContain("Cited Pages");
+    expect(html).toContain("ChatGPT");
+    expect(html).toContain("No AI Search data source connected");
+    const aiCard = html.slice(
+      html.indexOf('class="card card-kpi card-ai"'),
+      html.indexOf('class="card card-kpi card-seo"'),
+    );
+    expect(aiCard).not.toMatch(/\d/);
+  });
+
+  it("abbreviates KPI values and keeps the exact figure on the tile", () => {
+    const data = makeFixture();
+    data.tiles.backlinks = { value: 384_600_000, source: "ok" };
+    const html = render({ data });
+    expect(html).toContain(">384.6M<");
+    expect(html).toContain("384,600,000 backlinks");
   });
 
   it("renders the Distribution by Country table with WW + country rows", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render();
     expect(html).toContain("Distribution by Country");
     // The service labels the WW row in Spanish; the template translates it.
     expect(html).toContain("Worldwide");
     expect(html).not.toContain("Todo el mundo");
-    expect(html).toContain("10,000");
+    expect(html).toContain(">10K<");
   });
 
-  it("renders the Key Topics placeholder block", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+  it("swaps the rail's columns in AI mode without losing the rows", () => {
+    const html = render({ searchMode: "ai" });
+    expect(html).toContain("<th>Countries</th>");
+    expect(html).toContain(">Visibility<");
+    expect(html).toContain(">Mentions<");
+    // Same rows, no invented numbers behind the new columns.
+    expect(html).toContain("Worldwide");
+    expect(html).not.toContain(">Share<");
+  });
+
+  it("renders Top Organic Keywords with an intent badge and a details CTA", () => {
+    const html = render();
+    expect(html).toContain("Top Organic Keywords");
+    expect(html).toContain("example keyword");
+    expect(html).toContain('class="intent" title="informational">I<');
+    expect(html).toContain("0.89");
+    expect(html).toContain(">View details<");
+  });
+
+  it("renders Key Topics as the bottom-right card, not a rail block", () => {
+    const html = render();
     expect(html).toContain("Key Topics");
-    expect(html).toContain("Explore the key topics for example.com");
+    expect(html).toContain("key topics");
+    expect(html).toContain(">Get topics<");
+    // "coming soon" promised a date nobody owns (audit §Q).
+    expect(html).not.toContain("coming soon");
+    expect(html.indexOf("Key Topics")).toBeGreaterThan(
+      html.indexOf('class="bottom-grid"'),
+    );
   });
 
   it("renders the keyword bucket chart (stacked bar) + legend", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render();
     expect(html).toContain("<h3>Keywords</h3>");
     // The legend includes every bucket label.
     expect(html).toContain("Top 3");
@@ -224,14 +244,7 @@ describe("renderOverviewReport · template", () => {
   });
 
   it("renders the historical traffic chart when the series has enough months", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render();
     expect(html).toContain("<h3>Traffic</h3>");
     // Real data points → line chart SVG, not the placeholder.
     expect(html).toMatch(/<path[^>]+stroke="#1f6feb"/);
@@ -249,27 +262,13 @@ describe("renderOverviewReport · template", () => {
       ],
       paidPoints: [],
     };
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data,
-    });
+    const html = render({ data });
     expect(html).toContain("Not enough history yet");
   });
 
   it("adds the paid traffic series only when it has its own history", () => {
     const data = makeFixture();
-    const withoutPaid = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data,
-    });
+    const withoutPaid = render({ data });
     // "Paid Traffic" also names a KPI tile, so the discriminator is the count:
     // one occurrence is the tile alone, two means the chart legend as well.
     expect(withoutPaid.match(/Paid Traffic/g)).toHaveLength(1);
@@ -280,28 +279,14 @@ describe("renderOverviewReport · template", () => {
         date: p.date,
         value: 12,
       }));
-    const withPaid = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data,
-    });
+    const withPaid = render({ data });
     expect(withPaid.match(/Paid Traffic/g)).toHaveLength(2);
   });
 
   it("swaps the keyword bar for the stacked area once history exists", () => {
     const data = makeFixture();
     data.charts.keywordBucketTrend.value.points = bucketMonths(6);
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data,
-    });
+    const html = render({ data });
     expect(html).toContain(
       "Organic keywords by position over the last 6 months",
     );
@@ -317,54 +302,26 @@ describe("renderOverviewReport · template", () => {
   it("keeps today's keyword bar when the history is too short", () => {
     const data = makeFixture();
     data.charts.keywordBucketTrend.value.points = bucketMonths(2);
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data,
-    });
+    const html = render({ data });
     expect(html).toContain("Current distribution — 82 keywords sampled");
     expect(html).toMatch(/<text[^>]*>SERP features/);
   });
 
   it("renders at least 2 SVGs (chart + stacked bar)", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render();
     const svgCount = (html.match(/<svg /g) ?? []).length;
     expect(svgCount).toBeGreaterThanOrEqual(2);
   });
 
   it("inlines styles and does NOT load external CSS", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render();
     expect(html).not.toMatch(/<link[^>]+rel="stylesheet"/);
     expect(html).not.toMatch(/@import/);
     expect(html).not.toMatch(/tailwind|daisyui/);
   });
 
   it("escapes user-controlled domain to avoid HTML injection", () => {
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "<script>alert(1)</script>.evil.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data: makeFixture(),
-    });
+    const html = render({ domain: "<script>alert(1)</script>.evil.com" });
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
   });
@@ -373,28 +330,14 @@ describe("renderOverviewReport · template", () => {
     const data = makeFixture();
     data.healthy = false;
     data.tiles.backlinks = { value: null, source: "error" };
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data,
-    });
+    const html = render({ data });
     expect(html).toContain("Partial data");
   });
 
   it("shows a neutral 'N/A' tile instead of a red warning when a metric is missing", () => {
     const data = makeFixture();
     data.tiles.backlinks = { value: null, source: "error" };
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: {},
-      data,
-    });
+    const html = render({ data });
     expect(html).toContain('class="tile-value tile-value--empty">N/A<');
     expect(html).not.toContain("tile-warn");
   });
@@ -414,17 +357,15 @@ describe("renderOverviewReport · template", () => {
         keywords: 30,
       },
     ];
-    const html = renderOverviewReport({
-      report: "overview",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      flags: { US, ES },
-      data,
-    });
-    expect(html).toContain(`<span class="flag">${US}</span> US`);
+    const html = render({ flags: { US, ES }, data });
+    // Scoped to the rail: the header's country chip legitimately draws ES.
+    const rail = html.slice(
+      html.indexOf('<aside class="rail">'),
+      html.indexOf("</aside>"),
+    );
+    expect(rail).toContain(`<span class="flag">${US}</span> US`);
     // ES artwork is available and still must not appear: the row is a US row.
-    expect(html).not.toContain(ES);
+    expect(rail).not.toContain(ES);
     // The renderer's Chromium ships no colour emoji font, so a flag emoji
     // degrades to bare letterforms — it must never reach the markup.
     expect(html).not.toMatch(/\p{Regional_Indicator}/u);
@@ -434,14 +375,7 @@ describe("renderOverviewReport · template", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 2, 14, 10, 30));
     try {
-      const html = renderOverviewReport({
-        report: "overview",
-        domain: "example.com",
-        country: "ES",
-        device: "desktop",
-        flags: {},
-        data: makeFixture(),
-      });
+      const html = render();
       const expectedDate = new Intl.DateTimeFormat("en-US", {
         month: "short",
         day: "numeric",

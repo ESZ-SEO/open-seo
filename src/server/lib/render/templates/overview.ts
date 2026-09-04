@@ -1,4 +1,4 @@
-/* eslint-disable max-lines, max-lines-per-function -- Domain Overview template mirrors the Semrush 2026 layout — breadcrumb, full-width SEO card (8 tiles), and a single unified section (sidebar + stacked charts). Splitting fragments the section narrative across files. */
+/* eslint-disable max-lines, max-lines-per-function -- Domain Overview template mirrors the Semrush 2026 layout — query bar, KPI row (AI Search + SEO), analytics workspace (rail + stacked charts) and the 50/50 bottom grid. Splitting fragments the page narrative across files. */
 import type { ReportKind } from "@/server/lib/render/cache";
 import type {
   BucketTrendPoint,
@@ -6,6 +6,7 @@ import type {
   HistoricalKeywordBucket,
   KeywordBucket,
   OverviewReportData,
+  TopKeywordRow,
 } from "@/server/lib/render/reports/overview-report";
 import { KEYWORD_BUCKETS } from "@/server/lib/render/reports/overview-report";
 import {
@@ -21,37 +22,40 @@ import {
  *
  * Self-contained HTML sent to the renderer microservice for screenshotting.
  * Same brand surface as E1/E2 (inline `<style>`, no external CSS, lucide-style
- * inline SVG icons). Mirrors the exact Semrush 2026 clone spec
- * (`.dev/specs/semrush-2026-exact-clone-spec.md`).
+ * inline SVG icons). Composition follows the parity audit in
+ * `.dev/designer/semrush-ui-parity-pack-2026-09-04/`, whose target viewport is
+ * 1316×1231 — every height below is budgeted against that.
  *
  * All rendered copy is in English, matching the reference capture.
  *
- * Card count: the reference page has exactly 3 `Card` surfaces (AI Search,
- * SEO, and `#widgetDistribution`). AI Search is out of scope (no data
- * source), so we render **2**:
+ * Page regions, top to bottom:
  *
- *   1. "SEO" — full width, 8 KPI tiles in 2 rows × 4 columns (Authority
- *      Score, Organic Traffic, Paid Traffic, Referring Domains, Traffic
- *      Share, Organic Keywords, Paid Keywords, Backlinks). Full width rather
- *      than the original's 2/3 because reserving a third of the page for an
- *      empty AI Search placeholder reads worse than not having it at all
- *      (design review §3).
- *   2. The unified section (`#widgetDistribution` equivalent) — a single card
- *      with `324px 1fr` columns and no internal card borders:
- *        - sidebar: "Distribution by Country" table + "Key Topics"
- *          placeholder (our own addition; the topics endpoint is out of scope
- *          for E3).
- *        - main column: "Traffic" over "Keywords", separated by a hairline.
- *          Both plot the monthly history from `historical_rank_overview` when
- *          the domain has enough of one, and degrade to an honest placeholder
- *          (Traffic) or today's distribution bar (Keywords) when it doesn't —
- *          see {@link MIN_HISTORY_POINTS}.
+ *   1. Header (~185px): domain query bar, breadcrumb, title + export, filter
+ *      chips, tab strip.
+ *   2. KPI row — two equal-height cards on a 1fr/2fr grid:
+ *        - "AI Search": geometry only. No endpoint feeds AI visibility,
+ *          mentions or cited pages, so every cell renders `—` and the card
+ *          says so. Dropping the card instead would collapse the row back to
+ *          the full-width SEO block the audit asked us to leave behind.
+ *        - "SEO": the 8 KPIs in a 4×2 grid, values abbreviated (`1.1K`) with
+ *          the exact figure on the cell's `title`.
+ *   3. Analytics workspace (~505px) — one card, `22% / 78%` columns:
+ *        - rail: "Distribution by Country", whose columns follow
+ *          {@link OverviewTemplateInput.searchMode}.
+ *        - main: "Traffic" over "Keywords", separated by a hairline. Both plot
+ *          the monthly history from `historical_rank_overview` and degrade to
+ *          an honest placeholder (Traffic) or today's distribution bar
+ *          (Keywords) when there isn't enough of one — see
+ *          {@link MIN_HISTORY_POINTS}.
+ *   4. Bottom grid (~288px), 50/50: "Top Organic Keywords" (fed by the same
+ *      `ranked_keywords` response the bucket chart uses) and "Key Topics".
  *
- * Above them: breadcrumb + header chips (country, device, report date,
- * "Partial data" when degraded — the domain itself lives only in the `<h1>`,
- * see the design review's H10) and the decorative tab strip (only "Overview"
- * is active; the real Semrush tabs are `display:none` in the captured state,
- * so there is no better reference).
+ * **Static-render caveat.** The output is a PNG, so no control here is
+ * interactive: the query bar, the mode tabs, the range pills and the chart
+ * legends are rendered in the state the report was generated for. Anything
+ * that would have to *lie* about a state it can't reach — country quick-switch
+ * pills for countries this report isn't about, for one — is left out rather
+ * than drawn dead.
  */
 
 const REPORT_TITLES: Record<ReportKind, string> = {
@@ -79,6 +83,16 @@ const BUCKET_LABELS: Record<KeywordBucket, string> = {
   serpFeatures: "SERP features",
 };
 
+/**
+ * Which search surface the workspace describes.
+ *
+ * `google` is the default and the only mode with data behind it. `ai` exists
+ * because the reference capture is in that mode and the audit asks the rail to
+ * swap columns rather than swap modules; it renders the same geometry with
+ * `—` cells until an AI visibility source exists.
+ */
+export type SearchMode = "ai" | "google";
+
 export type OverviewTemplateInput = {
   report: ReportKind;
   domain: string;
@@ -90,6 +104,8 @@ export type OverviewTemplateInput = {
    *  quietly renders no flags when nobody passes any is how the flags go
    *  missing again without anything failing. */
   flags: Record<string, string>;
+  /** Defaults to `google` — the mode we actually have numbers for. */
+  searchMode?: SearchMode;
 };
 
 function escapeHtml(value: string): string {
@@ -110,7 +126,15 @@ const PERCENT_FMT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
+const MONEY_FMT = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 const EMPTY_VALUE = "N/A";
+/** The cell has a slot but no source behind it — distinct from `N/A`, which
+ *  means a source we do query came back without the number. */
+const NO_SOURCE = "—";
 
 function fmtNumber(value: number | null): string {
   return value == null ? EMPTY_VALUE : NUMBER_FMT.format(value);
@@ -118,6 +142,28 @@ function fmtNumber(value: number | null): string {
 
 function fmtPercent(value: number | null): string {
   return value == null ? EMPTY_VALUE : PERCENT_FMT.format(value);
+}
+
+const COMPACT_UNITS = [
+  { at: 1e9, suffix: "B" },
+  { at: 1e6, suffix: "M" },
+  { at: 1e3, suffix: "K" },
+] as const;
+
+/**
+ * `384,600,000` → `384.6M`. The reference abbreviates every KPI, and a
+ * nine-digit figure at 24px is what forced the old card to 266px tall.
+ * The exact number survives on the cell's `title`.
+ */
+function fmtCompact(value: number | null): string {
+  if (value == null) return EMPTY_VALUE;
+  const abs = Math.abs(value);
+  const unit = COMPACT_UNITS.find((u) => abs >= u.at);
+  if (unit === undefined) return NUMBER_FMT.format(value);
+  // One decimal, the way the reference reads (`1.1K`, `6.7K`, `384.6M`), and
+  // dropped when it would be a bare `.0`.
+  const rendered = (value / unit.at).toFixed(1).replace(/\.0$/, "");
+  return `${rendered}${unit.suffix}`;
 }
 
 const DATE_FMT = new Intl.DateTimeFormat("en-US", {
@@ -162,21 +208,30 @@ function countryDisplayLabel(row: CountryRow): string {
 const ICONS = {
   globe: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path></svg>`,
   donut: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 3a9 9 0 0 1 9 9h-9z" fill="currentColor" stroke="none"></path></svg>`,
+  info: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4M12 8h.01"></path></svg>`,
+  external: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>`,
+  download: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"></path></svg>`,
+  chevron: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>`,
+  device: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>`,
+  sparkle: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none"><path d="M12 2.5 13.8 8 19.5 9.8 13.8 11.6 12 17.1 10.2 11.6 4.5 9.8 10.2 8z"></path><path d="M18.5 15.2 19.4 18l2.8.9-2.8.9-.9 2.8-.9-2.8-2.8-.9 2.8-.9z"></path></svg>`,
 } as const;
 
-/* ----------------------------- Tiles ----------------------------- */
+/* ----------------------------- SEO tiles ----------------------------- */
 
 type Tile = {
   label: string;
+  /** Already formatted for display — abbreviated where the reference is. */
   value: string;
-  sub: string;
+  /** Exact/contextual figure, surfaced on the cell's `title` rather than as a
+   *  subline: the reference card has no sublines and the row height budget
+   *  (2 rows in ~175px) has no room for one. */
+  hint: string;
   icon?: string;
 };
 
 const TILES_PER_ROW = 4;
 
-/** 2 rows × 4 columns, matching the confirmed Semrush 2026 "SEO" card grid
- *  (`.dev/specs/semrush-2026-exact-clone-spec.md` §6). */
+/** 2 rows × 4 columns inside the right two thirds of the KPI row (audit §G). */
 function renderTiles(tiles: Tile[]): string {
   const rows: Tile[][] = [];
   for (let i = 0; i < tiles.length; i += TILES_PER_ROW) {
@@ -188,10 +243,9 @@ function renderTiles(tiles: Tile[]): string {
     <div class="tiles-row">${row
       .map(
         (t) => `
-      <div class="tile">
-        <div class="tile-label">${t.icon ?? ""}${escapeHtml(t.label)}</div>
+      <div class="tile"${t.hint ? ` title="${escapeHtml(t.hint)}"` : ""}>
+        <div class="tile-label">${t.icon ?? ""}${escapeHtml(t.label)}<span class="tile-info">${ICONS.info}</span></div>
         <div class="tile-value${t.value === EMPTY_VALUE ? " tile-value--empty" : ""}">${escapeHtml(t.value)}</div>
-        ${t.sub ? `<div class="tile-sub">${escapeHtml(t.sub)}</div>` : ""}
       </div>`,
       )
       .join("")}
@@ -200,9 +254,51 @@ function renderTiles(tiles: Tile[]): string {
     .join("");
 }
 
-/* ----------------------------- Distribution table ----------------------------- */
+/* ----------------------------- AI Search card ----------------------------- */
 
-function countryRows(
+/** The generative surfaces the reference breaks its AI metrics down by. Order
+ *  is the reference's. No endpoint reports any of them today, so the rows
+ *  carry the labels and the geometry and nothing else. */
+const AI_SOURCES = ["ChatGPT", "AI Overview", "AI Mode", "Gemini"] as const;
+
+/**
+ * The left third of the KPI row.
+ *
+ * Every number is `—` on purpose: DataForSEO has no AI-visibility product
+ * wired into this report, and the audit is explicit that the answer to a
+ * missing source is to keep the geometry and say nothing rather than to invent
+ * a figure or drop the card (which would take the whole 1fr/2fr row with it).
+ */
+function renderAiSearchCard(): string {
+  const sources = AI_SOURCES.map(
+    (name) => `
+      <div class="ai-row">
+        <span class="ai-row-name"><span class="ai-dot"></span>${escapeHtml(name)}</span>
+        <span>${NO_SOURCE}</span>
+        <span>${NO_SOURCE}</span>
+      </div>`,
+  ).join("");
+
+  return `
+    <div class="card card-kpi card-ai">
+      <div class="card-tab"><span class="badge badge-ai">AI Search</span></div>
+      <div class="ai-grid">
+        <div class="ai-head">AI Visibility</div>
+        <div class="ai-head">Mentions</div>
+        <div class="ai-head">Cited Pages</div>
+        <div class="ai-value">${NO_SOURCE}</div>
+        <div class="ai-value">${NO_SOURCE}</div>
+        <div class="ai-value">${NO_SOURCE}</div>
+      </div>
+      <div class="ai-rows">${sources}</div>
+      <div class="ai-note">No AI Search data source connected</div>
+    </div>`;
+}
+
+/* ----------------------------- Distribution rail ----------------------------- */
+
+/** Google mode: the share / traffic / keywords the report actually measures. */
+function googleCountryRows(
   rows: CountryRow[],
   flags: Record<string, string>,
 ): string {
@@ -210,15 +306,68 @@ function countryRows(
     return `<tr><td colspan="4" class="muted center">No data</td></tr>`;
   }
   return rows
-    .map((r) => {
-      return `<tr>
+    .map(
+      (r) => `<tr>
         <td>${countryFlagIcon(r.countryCode, flags)} ${escapeHtml(countryDisplayLabel(r))}</td>
         <td class="num">${fmtPercent(r.share)}</td>
-        <td class="num">${fmtNumber(r.traffic)}</td>
-        <td class="num">${fmtNumber(r.keywords)}</td>
-      </tr>`;
-    })
+        <td class="num">${fmtCompact(r.traffic)}</td>
+        <td class="num">${fmtCompact(r.keywords)}</td>
+      </tr>`,
+    )
     .join("");
+}
+
+/** AI mode: same rows, columns the audit specifies, no numbers behind them. */
+function aiCountryRows(
+  rows: CountryRow[],
+  flags: Record<string, string>,
+): string {
+  if (rows.length === 0) {
+    return `<tr><td colspan="3" class="muted center">No data</td></tr>`;
+  }
+  return rows
+    .map(
+      (r) => `<tr>
+        <td>${countryFlagIcon(r.countryCode, flags)} ${escapeHtml(countryDisplayLabel(r))}</td>
+        <td class="num">${NO_SOURCE}</td>
+        <td class="num">${NO_SOURCE}</td>
+      </tr>`,
+    )
+    .join("");
+}
+
+function renderRail(
+  mode: SearchMode,
+  rows: CountryRow[],
+  flags: Record<string, string>,
+): string {
+  const table =
+    mode === "ai"
+      ? `<table class="data">
+            <thead><tr>
+              <th>Countries</th>
+              <th class="num">Visibility</th>
+              <th class="num">Mentions</th>
+            </tr></thead>
+            <tbody>${aiCountryRows(rows, flags)}</tbody>
+          </table>
+          <div class="rail-foot">No AI Search data source connected</div>`
+      : `<table class="data">
+            <thead><tr>
+              <th>Country</th>
+              <th class="num">Share</th>
+              <th class="num">Traffic</th>
+              <th class="num">Keywords</th>
+            </tr></thead>
+            <tbody>${googleCountryRows(rows, flags)}</tbody>
+          </table>
+          <div class="rail-foot">share = country traffic / worldwide traffic</div>`;
+
+  return `
+      <aside class="rail">
+        <h3 class="rail-title">Distribution by Country</h3>
+        ${table}
+      </aside>`;
 }
 
 /* ----------------------------- Buckets ----------------------------- */
@@ -236,14 +385,20 @@ const BUCKET_COLORS: Record<KeywordBucket, string> = {
   serpFeatures: "#22c55e",
 };
 
-/** Nominal chart canvas — the full width of the unified section's main
- *  column (1216 shell − 40 padding − 324 sidebar − 16 gap = 836), so
- *  `width:100%; height:auto` scales SVG text at the size it was authored at
- *  instead of stretching a small canvas (see the design review's H3). */
-const CHART_WIDTH = 836;
-const CHART_HEIGHT = 260;
+/**
+ * Nominal chart canvas — the width of the workspace's main column at the
+ * reference viewport (1280 shell − 32 card padding = 1248 inner; 78% of that
+ * is 973, less the 16px gutter left of the charts). `width:100%; height:auto`
+ * then scales SVG text at the size it was authored at instead of stretching a
+ * small canvas.
+ */
+const CHART_WIDTH = 956;
+/** Compacted from 260: the workspace has to fit *both* charts in ~430px of
+ *  body height (audit §H), which is the 240px saving that opens room for the
+ *  bottom grid. */
+const CHART_HEIGHT = 160;
 /** Legend row + the 24px bar — the bucket split is a proportion, not a
- *  series, so it doesn't need a 260px canvas (design review finding F). */
+ *  series, so it doesn't need a full canvas (design review finding F). */
 const BAR_CHART_HEIGHT = 54;
 
 function stackedBarFromBuckets(counts: Record<KeywordBucket, number>): string {
@@ -312,6 +467,10 @@ function trafficChart(
   // that is empty or too short is dropped entirely: `renderMultiLineChart`
   // floors a missing value at 0, so plotting it would draw a confident flat
   // line along the axis for a domain that simply has no ads data.
+  //
+  // The reference draws a third "Branded Traffic" line. No endpoint in this
+  // report separates branded from non-branded queries, so there is no third
+  // series to draw rather than a third series to fake.
   if (
     paidPoints.length === points.length &&
     realPointCount(paidPoints) >= MIN_HISTORY_POINTS
@@ -397,6 +556,47 @@ function keywordsChart(charts: OverviewReportData["charts"]): ChartBlock {
  *  footnote so the sample size is never mistaken for the domain's total. */
 const RANKED_KEYWORDS_SAMPLE = 200;
 
+/* ----------------------------- Organic Research ----------------------------- */
+
+/** DataForSEO reports `main_intent` as a full word; the reference badges it
+ *  down to one letter. Anything outside the four known intents keeps its own
+ *  initial rather than being forced into a bucket it didn't claim. */
+const INTENT_INITIALS: Record<string, string> = {
+  informational: "I",
+  navigational: "N",
+  commercial: "C",
+  transactional: "T",
+};
+
+function intentBadge(intent: string | null): string {
+  if (intent === null) return `<span class="muted">${NO_SOURCE}</span>`;
+  const key = intent.toLowerCase();
+  const letter = INTENT_INITIALS[key] ?? intent.slice(0, 1).toUpperCase();
+  return `<span class="intent" title="${escapeHtml(intent)}">${escapeHtml(letter)}</span>`;
+}
+
+/** Five rows, because that is what fits the 288px card the audit budgets. */
+const ORGANIC_ROWS = 5;
+
+function organicKeywordRows(rows: TopKeywordRow[]): string {
+  if (rows.length === 0) {
+    return `<tr><td colspan="6" class="muted center">No data</td></tr>`;
+  }
+  return rows
+    .slice(0, ORGANIC_ROWS)
+    .map(
+      (r) => `<tr>
+        <td class="kw" title="${escapeHtml(r.keyword)}">${escapeHtml(r.keyword)}</td>
+        <td class="center">${intentBadge(r.intent)}</td>
+        <td class="num">${r.position == null ? NO_SOURCE : NUMBER_FMT.format(r.position)}</td>
+        <td class="num">${fmtCompact(r.volume)}</td>
+        <td class="num">${r.cpc == null ? NO_SOURCE : MONEY_FMT.format(r.cpc)}</td>
+        <td class="num">${r.traffic == null ? NO_SOURCE : NUMBER_FMT.format(Math.round(r.traffic * 100) / 100)}</td>
+      </tr>`,
+    )
+    .join("");
+}
+
 /* ----------------------------- Top-level ----------------------------- */
 
 export function renderOverviewReport({
@@ -406,14 +606,15 @@ export function renderOverviewReport({
   device,
   data,
   flags,
+  searchMode = "google",
 }: OverviewTemplateInput): string {
   const title = REPORT_TITLES[report];
   const deviceLabel = DEVICE_LABELS[device] ?? device;
-  // 8 tiles in 2 rows × 4 columns, matching the Semrush 2026 "SEO" card
-  // (`.dev/specs/semrush-2026-exact-clone-spec.md` §6) — not the 5-tile
-  // single row from the old design. No deltas (+/-%) are shown: the tiles come
-  // from the present-day endpoints, and pairing them with a prior month off
-  // the history series would compare two differently-scoped measurements.
+  const countryCode = country.toUpperCase();
+  // 8 tiles in 2 rows × 4 columns inside the SEO card. No deltas (+/-%) are
+  // shown: the tiles come from the present-day endpoints, and pairing them
+  // with a prior month off the history series would compare two
+  // differently-scoped measurements.
   const tiles: Tile[] = [
     {
       label: "Authority Score",
@@ -421,7 +622,9 @@ export function renderOverviewReport({
         data.tiles.authority.value != null
           ? String(data.tiles.authority.value)
           : EMPTY_VALUE,
-      sub: `rank composition: ${data.tiles.authorityComposition.rank ?? "—"}${
+      // The reference has no subline under Authority Score and the row budget
+      // has no room for one, so the composition moves to the tooltip.
+      hint: `Rank composition: ${data.tiles.authorityComposition.rank ?? NO_SOURCE}${
         data.tiles.authorityComposition.spamPenalty > 0
           ? ` · −${data.tiles.authorityComposition.spamPenalty} spam`
           : ""
@@ -429,29 +632,29 @@ export function renderOverviewReport({
     },
     {
       label: "Organic Traffic",
-      value: fmtNumber(data.tiles.organicTraffic.value),
-      sub:
+      value: fmtCompact(data.tiles.organicTraffic.value),
+      hint:
         data.tiles.organicTraffic.value == null
-          ? "no data for this period"
-          : "",
+          ? "No data for this period"
+          : `${fmtNumber(data.tiles.organicTraffic.value)} estimated monthly visits`,
     },
     {
       label: "Paid Traffic",
-      value: fmtNumber(data.tiles.paidTraffic.value),
-      sub:
+      value: fmtCompact(data.tiles.paidTraffic.value),
+      hint:
         data.tiles.paidTraffic.value == null
-          ? "no data for this period"
+          ? "No data for this period"
           : data.tiles.paidTraffic.value === 0
             ? "0 means no active campaign"
-            : "",
+            : `${fmtNumber(data.tiles.paidTraffic.value)} estimated monthly visits`,
     },
     {
-      label: "Referring Domains",
-      value: fmtNumber(data.tiles.referringDomains.value),
-      sub:
+      label: "Ref. Domains",
+      value: fmtCompact(data.tiles.referringDomains.value),
+      hint:
         data.tiles.referringDomains.value == null
-          ? "no data for this period"
-          : "",
+          ? "No data for this period"
+          : `${fmtNumber(data.tiles.referringDomains.value)} referring domains`,
       icon: ICONS.globe,
     },
     {
@@ -460,7 +663,7 @@ export function renderOverviewReport({
         data.tiles.trafficShare.value != null
           ? PERCENT_FMT.format(data.tiles.trafficShare.value)
           : EMPTY_VALUE,
-      sub:
+      hint:
         data.tiles.competitorsCount.value != null
           ? `Competitors ${NUMBER_FMT.format(data.tiles.competitorsCount.value)}`
           : "",
@@ -468,22 +671,27 @@ export function renderOverviewReport({
     },
     {
       label: "Organic Keywords",
-      value: fmtNumber(data.tiles.organicKeywords.value),
-      sub:
+      value: fmtCompact(data.tiles.organicKeywords.value),
+      hint:
         data.tiles.organicKeywords.value == null
-          ? "no data for this period"
-          : "",
+          ? "No data for this period"
+          : `${fmtNumber(data.tiles.organicKeywords.value)} ranking keywords`,
     },
     {
       label: "Paid Keywords",
-      value: fmtNumber(data.tiles.paidKeywords.value),
-      sub:
-        data.tiles.paidKeywords.value == null ? "no data for this period" : "",
+      value: fmtCompact(data.tiles.paidKeywords.value),
+      hint:
+        data.tiles.paidKeywords.value == null
+          ? "No data for this period"
+          : `${fmtNumber(data.tiles.paidKeywords.value)} paid keywords`,
     },
     {
       label: "Backlinks",
-      value: fmtNumber(data.tiles.backlinks.value),
-      sub: data.tiles.backlinks.value == null ? "no data for this period" : "",
+      value: fmtCompact(data.tiles.backlinks.value),
+      hint:
+        data.tiles.backlinks.value == null
+          ? "No data for this period"
+          : `${fmtNumber(data.tiles.backlinks.value)} backlinks`,
       icon: ICONS.globe,
     },
   ];
@@ -491,10 +699,11 @@ export function renderOverviewReport({
   const traffic = trafficChart(data.charts.trafficTrend);
   const keywords = keywordsChart(data.charts);
 
-  const countriesRows = countryRows(
-    data.tables.countries.source === "ok" ? data.tables.countries.value : [],
-    flags,
-  );
+  const countries =
+    data.tables.countries.source === "ok" ? data.tables.countries.value : [];
+  const topKeywords =
+    data.tables.topKeywords.source === "ok" ? data.tables.topKeywords.value : [];
+  const countryFlag = countryFlagIcon(countryCode, flags);
 
   const now = new Date();
   const generatedDate = DATE_FMT.format(now);
@@ -508,153 +717,278 @@ export function renderOverviewReport({
 <title>${escapeHtml(title)} · ${escapeHtml(domain)}</title>
 <style>
   :root {
-    --bg: #f5f7fa;
+    --bg: #f4f5f5;
     --card: #ffffff;
-    --text: #1f2933;
-    --muted: #6b7785;
-    --border: #e4e9f0;
+    --text: #202020;
+    --muted: #6b7280;
+    --border: #eeeff0;
+    --line: #e8e9ea;
     --brand: oklch(0.53 0.157 279.2);
+    --brand-soft: #e7e5ff;
     --accent: #14b8a6;
     --card-shadow: rgba(0, 21, 16, 0.07) 0 0 1px 0, rgba(0, 21, 16, 0.07) 0 1px 3px 0;
+    /* Big panels sit 12px apart; the reference measures 10–12 (audit §A). */
+    --gap: 10px;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text); padding: 32px;
+    background: var(--bg); color: var(--text); padding: 18px;
+    font-variant-numeric: tabular-nums;
   }
-  .shell { max-width: 1216px; margin: 0 auto; }
+  .shell { max-width: 1280px; margin: 0 auto; }
+
+  /* ---------- header ---------- */
+  /* The query group takes only the width it needs; the rest of the row stays
+     empty, the way the reference reads (audit §B). */
+  .query {
+    display: inline-flex; align-items: stretch; gap: 6px; margin-bottom: 8px;
+  }
+  .query-input {
+    display: inline-flex; align-items: center; justify-content: space-between;
+    gap: 24px; min-width: 320px; height: 30px; padding: 0 10px;
+    background: var(--card); border: 1px solid #d6d8dc; border-radius: 4px;
+    font-size: 13px; color: var(--text);
+  }
+  .query-clear { color: var(--muted); font-size: 14px; line-height: 1; }
+  .query-scope {
+    display: inline-flex; align-items: center; gap: 8px; height: 30px;
+    padding: 0 10px; background: var(--card); border: 1px solid #d6d8dc;
+    border-radius: 4px; font-size: 13px; color: var(--text);
+  }
+  .query-go {
+    display: inline-flex; align-items: center; height: 30px; padding: 0 14px;
+    background: #16181c; color: #fff; border: 0; border-radius: 4px;
+    font-size: 13px; font-weight: 600;
+  }
+
   .breadcrumb {
     display: flex; align-items: center; gap: 6px;
-    font-size: 14px; color: var(--muted); margin-bottom: 8px;
+    font-size: 12px; color: var(--muted); margin-bottom: 4px;
   }
   .breadcrumb .current { color: var(--text); }
-  h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 16px; margin: 24px 0 12px; color: var(--text); }
-  .chips { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 24px; align-items: center; }
-  .chip {
-    display: inline-flex; align-items: center; gap: 6px; height: 28px;
-    padding: 0 12px; border-radius: 6px; font-size: 13px; font-weight: 500;
-    background: var(--card); border: 1px solid var(--border); color: var(--muted);
+
+  .title-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 6px;
   }
-  .chip svg { width: 14px; height: 14px; }
+  h1 { font-size: 21px; margin: 0; letter-spacing: -0.02em; font-weight: 700; line-height: 1.2; }
+  h1 .domain { color: var(--brand); font-weight: 700; }
+  h1 .domain svg { vertical-align: -1px; margin-left: 3px; }
+  .btn-outline {
+    display: inline-flex; align-items: center; gap: 6px; height: 30px;
+    padding: 0 12px; border-radius: 4px; font-size: 12.5px; font-weight: 500;
+    background: var(--card); border: 1px solid #d6d8dc; color: var(--text);
+    white-space: nowrap;
+  }
+
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px;
+    padding: 0 9px; border-radius: 4px; font-size: 12.5px; font-weight: 500;
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+  }
+  .chip svg { width: 13px; height: 13px; color: var(--muted); }
+  .chip--active { background: var(--brand-soft); border-color: transparent; color: var(--brand); }
+  .chip--active svg { color: var(--brand); }
 
   .tabs {
-    display: flex; gap: 0; border-bottom: 1px solid var(--border);
-    margin-bottom: 24px;
+    display: flex; gap: 18px; border-bottom: 1px solid var(--border);
+    margin-bottom: var(--gap);
   }
   .tab {
-    padding: 10px 16px; font-size: 13px; font-weight: 600;
+    padding: 6px 0 9px; font-size: 13px; font-weight: 500;
     color: var(--muted); border-bottom: 2px solid transparent;
     margin-bottom: -1px;
   }
-  .tab.active {
-    color: var(--brand);
-    border-bottom-color: var(--brand);
-  }
+  .tab.active { color: var(--text); font-weight: 600; border-bottom-color: var(--brand); }
 
-  /* 2 rows × 4 columns; proportional fr columns + a hairline divider
-     between tiles (design review H5). */
-  .tiles { display: flex; flex-direction: column; gap: 36px; }
-  .tiles-row {
-    display: grid;
-    grid-template-columns: 1.2fr 1fr 1fr 1fr;
-    column-gap: 0;
-  }
-  .tile { min-width: 0; padding: 0 24px; border-radius: 6px; }
-  .tile:first-child { padding-left: 0; }
-  .tile + .tile { border-left: 1px solid rgba(0, 12, 8, 0.16); }
-  .tile-label {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 14px; font-weight: 400; line-height: 19.88px;
-    color: rgba(1, 5, 0, 0.898); text-transform: capitalize;
-    margin-bottom: 8px;
-  }
-  .tile-label svg { color: var(--muted); width: 14px; height: 14px; flex-shrink: 0; }
-  .tile-value { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--brand); }
-  .tile-value--empty { color: var(--muted); font-weight: 600; }
-  .tile-sub { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.3; }
-
+  /* ---------- cards ---------- */
   /* Cards carry a double hairline shadow, no border — verified against the
      reference dump (design review §1 bis). */
   .card {
     background: var(--card); border: 0;
-    border-radius: 8px; padding: 20px;
+    border-radius: 10px; padding: 16px;
     box-shadow: var(--card-shadow);
-    margin-bottom: 24px;
   }
 
-  /* The unified lower section: one card, sidebar + stacked charts, no
-     internal card surfaces (design review H1 — the 324px sidebar and 16px
-     gap are literal values from the reference). */
-  .section {
-    display: grid; grid-template-columns: 324px 1fr;
-    column-gap: 16px; align-items: start;
+  /* ---------- KPI row (1fr / 2fr, equal height) ---------- */
+  .kpi-row {
+    display: grid; grid-template-columns: minmax(340px, 1fr) minmax(0, 2fr);
+    gap: var(--gap); align-items: stretch; margin-bottom: var(--gap);
   }
-  .section-side { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
-  .section-main { display: flex; flex-direction: column; min-width: 0; }
-  .chart-block + .chart-block {
-    margin-top: 32px; padding-top: 32px; border-top: 1px solid var(--border);
-  }
-
-  .card-head {
-    display: flex; align-items: baseline; justify-content: space-between;
-    margin-bottom: 12px;
-  }
-  .card-head h3 { margin: 0; font-size: 16px; font-weight: 700; line-height: 24px; color: rgba(1, 5, 0, 0.898); }
-  .card-head .muted { font-size: 12px; color: var(--muted); }
-  .muted { color: var(--muted); }
-  .center { text-align: center; }
-  .badge {
-    display: inline-flex; align-items: center; height: 28px; padding: 0 20px;
-    font-size: 14px; font-weight: 500; line-height: 20px;
-    background: rgb(231, 229, 255); color: rgb(92, 83, 217);
-    border-radius: 6px 0 12px 0;
-  }
+  .card-kpi { display: flex; flex-direction: column; min-height: 175px; }
   /* The badge is a corner tab, not a chip floating inside the card: measured
      on the reference crop its origin is the card's own origin (0,0), so it
-     has to escape the card's 20px padding. The asymmetric radius above only
-     makes sense in that position. */
-  .card-seo .card-head { margin: -20px 0 18px -20px; }
+     has to escape the card's padding. The asymmetric radius only makes sense
+     in that position. */
+  .card-tab { margin: -16px 0 8px -16px; }
+  .badge {
+    display: inline-flex; align-items: center; height: 24px; padding: 0 14px;
+    font-size: 12.5px; font-weight: 500; line-height: 20px;
+    background: rgb(231, 229, 255); color: rgb(92, 83, 217);
+    border-radius: 10px 0 12px 0;
+  }
+  .badge-ai { background: #ece7ff; color: #6a4ee0; }
+
+  /* AI Search — three metric columns over four source rows. Same column
+     rhythm for both, so the source numbers sit under Mentions and Cited Pages
+     the way the reference does (left-aligned under their own header, not
+     ragged against the card's right edge). */
+  .ai-grid, .ai-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) 78px 82px;
+    align-items: baseline; column-gap: 8px;
+  }
+  .ai-head { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .ai-value { font-size: 20px; font-weight: 700; color: var(--brand); margin-top: 2px; }
+  .ai-rows { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+  .ai-row { font-size: 12px; line-height: 15px; color: var(--text); }
+  .ai-row-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .ai-dot {
+    width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
+    background: var(--brand-soft); box-shadow: inset 0 0 0 1px rgba(92, 83, 217, 0.35);
+  }
+  .ai-note { margin-top: auto; padding-top: 6px; font-size: 10.5px; color: var(--muted); }
+
+  /* SEO — 2 rows × 4 columns, hairline dividers between tiles. */
+  .tiles { display: flex; flex-direction: column; gap: 12px; }
+  .tiles-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 0; }
+  .tile { min-width: 0; padding: 0 14px; }
+  .tile:first-child { padding-left: 0; }
+  .tile-label {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 12.5px; font-weight: 400; line-height: 17px;
+    color: var(--text); margin-bottom: 5px; white-space: nowrap;
+  }
+  .tile-label svg { color: var(--muted); width: 13px; height: 13px; flex-shrink: 0; }
+  .tile-info { display: inline-flex; color: #b7bcc4; }
+  .tile-info svg { width: 12px; height: 12px; color: inherit; }
+  .tile-value { font-size: 25px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--brand); }
+  .tile-value--empty { color: var(--muted); font-weight: 600; }
+
+  /* ---------- analytics workspace ---------- */
+  .workspace { margin-bottom: var(--gap); }
+  .ws-head {
+    display: flex; align-items: center; gap: 20px;
+    margin-bottom: 12px;
+  }
+  .seg { display: inline-flex; gap: 2px; }
+  .seg-item {
+    display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
+    border-radius: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted);
+  }
+  .seg-item.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .range { display: inline-flex; gap: 14px; font-size: 12.5px; color: var(--muted); }
+  .range .active { color: var(--brand); font-weight: 600; border-bottom: 2px solid var(--brand); padding-bottom: 2px; }
+
+  .ws-body { display: grid; grid-template-columns: minmax(240px, 22%) minmax(0, 78%); min-height: 418px; }
+  .rail { padding-right: 16px; border-right: 1px solid var(--border); min-width: 0; }
+  .rail-title { margin: 0 0 8px; font-size: 14.5px; font-weight: 700; }
+  .rail-foot { font-size: 10.5px; color: var(--muted); margin-top: 8px; }
+  .ws-main { padding-left: 16px; display: flex; flex-direction: column; min-width: 0; }
+  .chart-block + .chart-block {
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .chart-block h3 { margin: 0 0 4px; font-size: 14.5px; font-weight: 700; }
   .chart-body { display: block; }
   .chart-body svg { width: 100%; height: auto; }
-  .chart-foot { font-size: 11px; color: var(--muted); margin-top: 8px; padding: 0 4px; }
+  .chart-foot { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
 
+  /* ---------- bottom grid ---------- */
+  .section-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .section-head h2 { margin: 0; font-size: 15.5px; font-weight: 700; }
+  .section-head .country { font-size: 12.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+  .bottom-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+  .card-bottom { min-height: 288px; display: flex; flex-direction: column; }
+  .bottom-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .bottom-head h3 { margin: 0; font-size: 14.5px; font-weight: 700; }
+  .bottom-head .count { font-size: 14px; color: var(--muted); font-weight: 500; }
+  .btn-dark {
+    display: inline-flex; align-items: center; align-self: flex-start;
+    height: 28px; padding: 0 12px; margin-top: auto;
+    background: #16181c; color: #fff; border-radius: 4px;
+    font-size: 12.5px; font-weight: 600;
+  }
+
+  /* ---------- tables ---------- */
   table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  table.data th, table.data td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-  table.data th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
-  table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.data th, table.data td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  table.data th { font-size: 11px; color: var(--muted); font-weight: 500; padding-bottom: 5px; }
+  table.data td { color: var(--text); }
+  table.data td.num, table.data th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.data td.center, table.data th.center { text-align: center; }
   table.data tr:last-child td { border-bottom: 0; }
+  table.data td:first-child, table.data th:first-child { padding-left: 0; }
+  table.data td:last-child, table.data th:last-child { padding-right: 0; }
+  /* Fixed layout so the keyword column keeps its share of the half-width card
+     instead of collapsing to fit the numeric ones (audit §P: truncate with a
+     tooltip, don't starve the column). */
+  table.data--organic { table-layout: fixed; }
+  table.data--organic th:nth-child(1) { width: 36%; }
+  table.data--organic th:nth-child(2) { width: 11%; }
+  table.data--organic th:nth-child(3) { width: 10%; }
+  table.data--organic th:nth-child(4) { width: 14%; }
+  table.data--organic th:nth-child(5) { width: 15%; }
+  td.kw {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--brand);
+  }
+  .intent {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 19px; height: 19px; border-radius: 4px;
+    background: var(--brand-soft); color: var(--brand);
+    font-size: 10.5px; font-weight: 700;
+  }
+
   /* 3:2 is the aspect the flag SVGs are authored at; the hairline ring keeps
      the white-heavy flags (JP, PL) from dissolving into the row. */
   .flag {
-    display: inline-block; width: 18px; height: 12px; vertical-align: -1px;
+    display: inline-block; width: 17px; height: 11px; vertical-align: -1px;
     border-radius: 2px; overflow: hidden;
     box-shadow: 0 0 0 1px rgba(0, 12, 8, 0.12);
   }
   .flag svg { display: block; width: 100%; height: 100%; }
+  .muted { color: var(--muted); }
+  .center { text-align: center; }
 
-  .topic-card {
-    text-align: center;
-    padding: 28px 18px;
-    background: linear-gradient(180deg, #f0f6ff 0%, #fafbff 100%);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+  /* ---------- key topics ---------- */
+  /* Our own placeholder art: two blurred lavender panels behind the copy. No
+     third-party asset is reproduced, and nothing in it reads as data. */
+  .topics-body {
+    position: relative; flex: 1; margin-top: 4px; border-radius: 8px;
+    overflow: hidden; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(110deg, #eef0ff 0%, #f4f0ff 55%, #efe9ff 100%);
   }
-  .topic-card .topic-help {
-    display: inline-block; padding: 6px 12px; border-radius: 999px;
-    background: #e0ecff; color: var(--brand); font-size: 11px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.04em;
+  .topics-skeleton { position: absolute; inset: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; filter: blur(2.5px); opacity: 0.75; }
+  .topics-pane { border-radius: 8px; background: rgba(255, 255, 255, 0.5); padding: 12px; display: flex; flex-direction: column; gap: 7px; }
+  .topics-bar { height: 7px; border-radius: 4px; background: rgba(104, 104, 216, 0.22); }
+  .topics-bar.w70 { width: 70%; }
+  .topics-bar.w45 { width: 45%; }
+  .topics-bar.w85 { width: 85%; }
+  .topics-copy { position: relative; text-align: center; font-size: 13px; color: var(--text); }
+  .btn-violet {
+    display: inline-flex; align-items: center; height: 26px; padding: 0 12px;
+    margin-top: 10px; background: var(--brand); color: #fff;
+    border-radius: 4px; font-size: 12.5px; font-weight: 600;
   }
 
   .footer {
-    margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--border);
-    font-size: 11px; color: var(--muted); display: flex; justify-content: space-between;
+    margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border);
+    font-size: 10.5px; color: var(--muted); display: flex; justify-content: space-between;
   }
 </style>
 </head>
 <body>
   <div class="shell">
+    <div class="query">
+      <span class="query-input">${escapeHtml(domain)}<span class="query-clear">×</span></span>
+      <span class="query-scope">Root Domain ${ICONS.chevron}</span>
+      <span class="query-go">Analyze</span>
+    </div>
+
     <nav class="breadcrumb">
       <span>Home</span>
       <span>›</span>
@@ -662,80 +996,106 @@ export function renderOverviewReport({
       <span>›</span>
       <span class="current">Domain Overview</span>
     </nav>
-    <h1>${escapeHtml(title)}: <span style="font-weight:500;color:var(--muted)">${escapeHtml(domain)}</span></h1>
-    <div class="chips">
-      <span class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-        Country: ${escapeHtml(country.toUpperCase())}
-      </span>
-      <span class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
-        ${escapeHtml(deviceLabel)}
-      </span>
-      <span class="chip">${escapeHtml(generatedDate)}</span>
+
+    <div class="title-row">
+      <h1>${escapeHtml(title)}: <span class="domain">${escapeHtml(domain)}${ICONS.external}</span></h1>
+      <span class="btn-outline">${ICONS.download}Export to PDF</span>
+    </div>
+
+    <div class="filters">
+      <span class="chip chip--active">${countryFlag || ICONS.globe}${escapeHtml(countryCode)}</span>
+      <span class="chip">${ICONS.device}${escapeHtml(deviceLabel)} ${ICONS.chevron}</span>
+      <span class="chip">${escapeHtml(generatedDate)} ${ICONS.chevron}</span>
+      <span class="chip">USD ${ICONS.chevron}</span>
       ${data.healthy ? "" : `<span class="chip" style="color:#92660a;border-color:#f3e0b5;background:#fdf8ec;">Partial data</span>`}
     </div>
 
     <div class="tabs">
       <span class="tab active">Overview</span>
-      <span class="tab">Domain Comparison</span>
-      <span class="tab">Growth</span>
-      <span class="tab">Country Comparison</span>
+      <span class="tab">Growth report</span>
+      <span class="tab">Compare by countries</span>
     </div>
 
-    <div class="card card-seo">
-      <div class="card-head">
-        <span class="badge">SEO</span>
+    <div class="kpi-row">
+      ${renderAiSearchCard()}
+      <div class="card card-kpi card-seo">
+        <div class="card-tab"><span class="badge">SEO</span></div>
+        <div class="tiles">${renderTiles(tiles)}</div>
       </div>
-      <div class="tiles">${renderTiles(tiles)}</div>
     </div>
 
-    <div class="card section">
-      <aside class="section-side">
-        <div class="side-block">
-          <div class="card-head">
-            <h3>Distribution by Country</h3>
-          </div>
-          <table class="data">
-            <thead><tr>
-              <th>Country</th>
-              <th class="num">Share</th>
-              <th class="num">Traffic</th>
-              <th class="num">Keywords</th>
-            </tr></thead>
-            <tbody>${countriesRows}</tbody>
-          </table>
-          <div class="chart-foot">share = country traffic / worldwide traffic</div>
+    <div class="card workspace">
+      <div class="ws-head">
+        <div class="seg">
+          <span class="seg-item${searchMode === "ai" ? " active" : ""}">AI Search</span>
+          <span class="seg-item${searchMode === "google" ? " active" : ""}">Google Search</span>
         </div>
-
-        <div class="side-block">
-          <div class="card-head">
-            <h3>Key Topics</h3>
-            <span class="muted">coming soon</span>
-          </div>
-          <div class="topic-card">
-            <div class="topic-help">Explore the key topics for ${escapeHtml(domain)}</div>
-            <p class="muted" style="margin-top:12px;font-size:12px;">View topics</p>
-          </div>
+        <div class="range">
+          <span>1M</span><span>6M</span><span>1Y</span><span class="active">2Y</span><span>All time</span>
         </div>
-      </aside>
-
-      <div class="section-main">
-        <div class="chart-block">
-          <div class="card-head">
+      </div>
+      <div class="ws-body">
+        ${renderRail(searchMode, countries, flags)}
+        <div class="ws-main">
+          <div class="chart-block">
             <h3>Traffic</h3>
-            <span class="muted">1M / 6M / 1Y / 2Y / All time</span>
+            <div class="chart-body">${traffic.svg}</div>
+            <div class="chart-foot">${escapeHtml(traffic.foot)}</div>
           </div>
-          <div class="chart-body">${traffic.svg}</div>
-          <div class="chart-foot">${escapeHtml(traffic.foot)}</div>
-        </div>
-
-        <div class="chart-block">
-          <div class="card-head">
+          <div class="chart-block">
             <h3>Keywords</h3>
+            <div class="chart-body">${keywords.svg}</div>
+            <div class="chart-foot">${escapeHtml(keywords.foot)}</div>
           </div>
-          <div class="chart-body">${keywords.svg}</div>
-          <div class="chart-foot">${escapeHtml(keywords.foot)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <h2>Organic Research</h2>
+      <span class="country">${countryFlag}${escapeHtml(countryCode)}</span>
+    </div>
+    <div class="bottom-grid">
+      <div class="card card-bottom">
+        <div class="bottom-head">
+          <h3>Top Organic Keywords</h3>
+          <span class="count">${fmtNumber(data.tiles.organicKeywords.value)}</span>
+        </div>
+        <table class="data data--organic">
+          <thead><tr>
+            <th>Keyword</th>
+            <th class="center">Intent</th>
+            <th class="num">Pos.</th>
+            <th class="num">Volume</th>
+            <th class="num">CPC (USD)</th>
+            <th class="num">Traffic</th>
+          </tr></thead>
+          <tbody>${organicKeywordRows(topKeywords)}</tbody>
+        </table>
+        <span class="btn-dark">View details</span>
+      </div>
+
+      <div class="card card-bottom">
+        <div class="bottom-head">
+          <h3><span style="color:var(--brand);vertical-align:-2px;">${ICONS.sparkle}</span> Key Topics</h3>
+        </div>
+        <div class="topics-body">
+          <div class="topics-skeleton">
+            <div class="topics-pane">
+              <div class="topics-bar w70"></div>
+              <div class="topics-bar w45"></div>
+              <div class="topics-bar w85"></div>
+            </div>
+            <div class="topics-pane">
+              <div class="topics-bar w45"></div>
+              <div class="topics-bar w85"></div>
+              <div class="topics-bar w70"></div>
+            </div>
+          </div>
+          <div class="topics-copy">
+            View <strong>${escapeHtml(domain)}</strong> key topics
+            <div><span class="btn-violet">Get topics</span></div>
+          </div>
         </div>
       </div>
     </div>
@@ -743,7 +1103,7 @@ export function renderOverviewReport({
     <div class="footer">
       <span>Data via DataForSEO</span>
       <span>Generated: ${escapeHtml(generatedDateTime)}</span>
-      <span>${escapeHtml(report)} · ${escapeHtml(country.toUpperCase())} · ${escapeHtml(deviceLabel)}</span>
+      <span>${escapeHtml(report)} · ${escapeHtml(countryCode)} · ${escapeHtml(deviceLabel)}</span>
     </div>
   </div>
 </body>
