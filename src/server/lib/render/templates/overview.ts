@@ -972,14 +972,22 @@ export function renderOverviewReport({
   }
 
   .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
-  .chip {
+  /* Device, date and currency are plain accent-coloured text with a chevron —
+     no box. The reference reads them as a row of links; boxing each one turned
+     three filters into three buttons competing with the market control beside
+     them. The padding is what keeps them apart now that no border does it. */
+  .filter {
     display: inline-flex; align-items: center; gap: 6px; height: 26px;
-    padding: 0 9px; border-radius: 4px; font-size: 12.5px; font-weight: 500;
-    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    padding: 0 3px; font-size: 12.5px; font-weight: 500; color: var(--brand);
   }
-  .chip svg { width: 13px; height: 13px; color: var(--muted); }
-  .chip--active { background: var(--brand-surface); border-color: transparent; color: var(--brand); }
-  .chip--active svg { color: var(--brand); }
+  .filter svg { width: 13px; height: 13px; color: var(--brand); }
+  /* The one boxed item left in the row, because it is a status and not a
+     filter: it has to read as an exception to the row, not a member of it. */
+  .chip--warn {
+    display: inline-flex; align-items: center; height: 26px; padding: 0 9px;
+    border-radius: 4px; font-size: 12.5px; font-weight: 500;
+    background: #fdf8ec; border: 1px solid #f3e0b5; color: #92660a;
+  }
 
   /* The markets are one segmented control, not four loose labels: a single
      bordered container with hairline dividers between the items, and the
@@ -1267,10 +1275,10 @@ export function renderOverviewReport({
 
     <div class="filters">
       ${quickMarketPills(countryCode, flags)}
-      <span class="chip">${ICONS.device}${escapeHtml(deviceLabel)} ${ICONS.chevron}</span>
-      <span class="chip">${escapeHtml(generatedDate)} ${ICONS.chevron}</span>
-      <span class="chip">USD ${ICONS.chevron}</span>
-      ${data.healthy ? "" : `<span class="chip" style="color:#92660a;border-color:#f3e0b5;background:#fdf8ec;">Partial data</span>`}
+      <span class="filter">${ICONS.device}${escapeHtml(deviceLabel)} ${ICONS.chevron}</span>
+      <span class="filter">${escapeHtml(generatedDate)} ${ICONS.chevron}</span>
+      <span class="filter">USD ${ICONS.chevron}</span>
+      ${data.healthy ? "" : `<span class="chip--warn">Partial data</span>`}
     </div>
 
     <div class="tabs">
