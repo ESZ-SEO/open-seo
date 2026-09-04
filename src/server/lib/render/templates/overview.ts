@@ -1091,9 +1091,15 @@ export function renderOverviewReport({
 
   /* ---------- analytics workspace ---------- */
   .workspace { margin-bottom: var(--gap); }
+  /* The controls need air under them before the section titles start; at 12px
+     "Distribution by Country" and "Traffic" read as a caption to the tab row
+     rather than the heads of their own modules. The 8px is *taken* from the
+     hairline between the two charts below, not added to the card: the
+     workspace has a ~508px budget and the bottom grid has ~11px of clearance
+     over the 1231 fold, so growing the card spends someone else's room. */
   .ws-head {
     display: flex; align-items: center; gap: 20px;
-    margin-bottom: 12px;
+    margin-bottom: 20px;
   }
   .seg { display: inline-flex; gap: 2px; }
   .seg-item {
@@ -1143,7 +1149,7 @@ export function renderOverviewReport({
   .serp-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .ws-main { padding-left: 16px; display: flex; flex-direction: column; min-width: 0; }
   .chart-block + .chart-block {
-    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
   }
   .chart-block h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
   .chart-body { display: block; }
