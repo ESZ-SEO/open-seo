@@ -578,6 +578,11 @@ function renderRail(
  * then scales SVG text at the size it was authored at instead of stretching a
  * small canvas.
  */
+/** The workspace's rail/charts split (audit §H). Declared once because the
+ *  control row has to repeat it exactly: two grids that are "both 22/78" by
+ *  coincidence drift the moment one of them is tuned. */
+const WS_COLUMNS = "minmax(240px, 22%) minmax(0, 78%)";
+
 const CHART_WIDTH = 956;
 /** Compacted from 260: the workspace has to fit *both* charts in ~430px of
  *  body height (audit §H), which is the 240px saving that opens room for the
@@ -1107,10 +1112,19 @@ export function renderOverviewReport({
      hairline between the two charts below, not added to the card: the
      workspace has a ~508px budget and the bottom grid has ~11px of clearance
      over the 1231 fold, so growing the card spends someone else's room. */
+  /* The control row is not one shared strip: it is two groups, each sitting
+     over the column it drives. The mode toggle belongs to the rail, the range
+     and granularity to the charts — so the row repeats the body's grid
+     (WS_COLUMNS) and its 16px gutter, and the left edge of "1M" lands on the
+     left edge of "Traffic". Laid out as one flex row, the range floated into
+     the rail's third of the page and read as a control over the country
+     table, which it isn't. */
   .ws-head {
-    display: flex; align-items: center; gap: 20px;
+    display: grid; grid-template-columns: ${WS_COLUMNS}; align-items: center;
     margin-bottom: 20px;
   }
+  .ws-head-rail { padding-right: 16px; }
+  .ws-head-main { display: flex; align-items: center; gap: 20px; padding-left: 16px; }
   /* Both toggles in this row — AI Search / Google Search and Days / Months —
      are the same control in the reference: one container with a hairline
      border, and the selected side an *inset* box with a lavender fill and its
@@ -1140,7 +1154,7 @@ export function renderOverviewReport({
   .range { display: inline-flex; gap: 14px; font-size: 12.5px; color: var(--muted); }
   .range .active { color: var(--brand); font-weight: 600; border-bottom: 2px solid var(--brand); padding-bottom: 2px; }
 
-  .ws-body { display: grid; grid-template-columns: minmax(240px, 22%) minmax(0, 78%); min-height: 418px; }
+  .ws-body { display: grid; grid-template-columns: ${WS_COLUMNS}; min-height: 418px; }
   .rail { padding-right: 16px; border-right: 1px solid var(--border); min-width: 0; }
   .rail-block + .rail-block { margin-top: 12px; }
   .rail-title {
@@ -1324,19 +1338,23 @@ export function renderOverviewReport({
 
     <div class="card workspace">
       <div class="ws-head">
-        <div class="seg">
-          <span class="seg-item${searchMode === "ai" ? " active" : ""}">AI Search</span>
-          <span class="seg-item${searchMode === "google" ? " active" : ""}">Google Search</span>
-        </div>
-        <div class="range">
-          <span>1M</span><span>6M</span><span>1Y</span><span class="active">2Y</span><span>All time</span>
-        </div>
-        <div class="ws-tools">
+        <div class="ws-head-rail">
           <span class="seg">
-            <span class="seg-item">Days</span>
-            <span class="seg-item active">Months</span>
+            <span class="seg-item${searchMode === "ai" ? " active" : ""}">AI Search</span>
+            <span class="seg-item${searchMode === "google" ? " active" : ""}">Google Search</span>
           </span>
-          <span class="btn-outline">${ICONS.upload}Export</span>
+        </div>
+        <div class="ws-head-main">
+          <div class="range">
+            <span>1M</span><span>6M</span><span>1Y</span><span class="active">2Y</span><span>All time</span>
+          </div>
+          <div class="ws-tools">
+            <span class="seg">
+              <span class="seg-item">Days</span>
+              <span class="seg-item active">Months</span>
+            </span>
+            <span class="btn-outline">${ICONS.upload}Export</span>
+          </div>
         </div>
       </div>
       <div class="ws-body">
