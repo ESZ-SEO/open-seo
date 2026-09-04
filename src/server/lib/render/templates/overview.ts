@@ -287,6 +287,11 @@ const COLORS = {
   lavender: "#e6e9fc",
   /** Warm lavender: tags and badges sitting on a white card. */
   lavenderWarm: "#eae5fe",
+  /** A hair above white, for the selected side of a segmented toggle: the
+   *  reference marks that selection with the inset border and lets the fill
+   *  barely register. The stronger `lavender` there reads as a filled button
+   *  and swallows the border it is supposed to sit behind. */
+  lavenderFaint: "#f1f3fd",
   /** Reserved for the second traffic series and the non-AI SERP features
    *  slice. Deliberately teal rather than green — green stays available for a
    *  semantic positive (a delta), which is the one thing VIS-01 asks us to
@@ -908,11 +913,16 @@ export function renderOverviewReport({
     --muted: ${COLORS.muted};
     --border: #eeeff0;
     --line: #e8e9ea;
+    /* Darker than --border: the hairline around an interactive control (query
+       bar, market group, toggles, outline buttons), which has to read as an
+       edge rather than as a divider. */
+    --control-border: #d6d8dc;
     --brand: ${COLORS.accent};
     /* Two lavenders, as the audit specifies: the warm one carries tags and
        badges, the cool one marks a selected control. */
     --brand-soft: ${COLORS.lavenderWarm};
     --brand-surface: ${COLORS.lavender};
+    --brand-surface-soft: ${COLORS.lavenderFaint};
     --accent: ${COLORS.mint};
     --card-shadow: rgba(0, 21, 16, 0.07) 0 0 1px 0, rgba(0, 21, 16, 0.07) 0 1px 3px 0;
     /* Big panels sit 12px apart; the reference measures 10–12 (audit §A). */
@@ -936,13 +946,13 @@ export function renderOverviewReport({
   .query-input {
     display: inline-flex; align-items: center; justify-content: space-between;
     gap: 24px; min-width: 320px; height: 30px; padding: 0 10px;
-    background: var(--card); border: 1px solid #d6d8dc; border-radius: 4px;
+    background: var(--card); border: 1px solid var(--control-border); border-radius: 4px;
     font-size: 13px; color: var(--text);
   }
   .query-clear { color: var(--muted); font-size: 14px; line-height: 1; }
   .query-scope {
     display: inline-flex; align-items: center; gap: 8px; height: 30px;
-    padding: 0 10px; background: var(--card); border: 1px solid #d6d8dc;
+    padding: 0 10px; background: var(--card); border: 1px solid var(--control-border);
     border-radius: 4px; font-size: 13px; color: var(--text);
   }
   .query-go {
@@ -967,7 +977,7 @@ export function renderOverviewReport({
   .btn-outline {
     display: inline-flex; align-items: center; gap: 6px; height: 30px;
     padding: 0 12px; border-radius: 4px; font-size: 12.5px; font-weight: 500;
-    background: var(--card); border: 1px solid #d6d8dc; color: var(--text);
+    background: var(--card); border: 1px solid var(--control-border); color: var(--text);
     white-space: nowrap;
   }
 
@@ -996,7 +1006,7 @@ export function renderOverviewReport({
      standing next to it. */
   .markets {
     display: inline-flex; align-items: center; margin-right: 6px;
-    background: var(--card); border: 1px solid #d6d8dc; border-radius: 4px;
+    background: var(--card); border: 1px solid var(--control-border); border-radius: 4px;
     overflow: hidden;
   }
   .pill {
@@ -1004,7 +1014,7 @@ export function renderOverviewReport({
     padding: 0 8px; font-size: 12.5px; font-weight: 500;
     color: var(--text); white-space: nowrap;
   }
-  .pill + .pill { border-left: 1px solid #d6d8dc; }
+  .pill + .pill { border-left: 1px solid var(--control-border); }
   .pill svg { width: 13px; height: 13px; color: var(--muted); }
   .pill--active { background: var(--brand-surface); color: var(--brand); font-weight: 600; }
   .pill--active svg { color: var(--brand); }
@@ -1101,20 +1111,31 @@ export function renderOverviewReport({
     display: flex; align-items: center; gap: 20px;
     margin-bottom: 20px;
   }
-  .seg { display: inline-flex; gap: 2px; }
-  .seg-item {
-    display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
-    border-radius: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted);
+  /* Both toggles in this row — AI Search / Google Search and Days / Months —
+     are the same control in the reference: one container with a hairline
+     border, and the selected side an *inset* box with a lavender fill and its
+     own accent hairline. Both labels keep the body ink: the box marks the
+     selection, not the colour, which is why the inactive side doesn't grey
+     out. 22px item + 1px padding + 1px border = the 26px the rest of the row
+     stands at. */
+  .seg {
+    display: inline-flex; align-items: center; padding: 1px;
+    background: var(--card); border: 1px solid var(--control-border);
+    border-radius: 5px;
   }
-  .seg-item.active { background: var(--brand-surface); color: var(--brand); font-weight: 600; }
+  .seg-item {
+    display: inline-flex; align-items: center; height: 22px; padding: 0 9px;
+    border-radius: 4px; font-size: 12.5px; font-weight: 500; color: var(--text);
+  }
+  .seg-item.active {
+    background: var(--brand-surface-soft); font-weight: 600;
+    box-shadow: inset 0 0 0 1px rgba(104, 104, 216, 0.35);
+  }
   /* Granularity + export sit at the far end of the workspace header (ANA-03).
      "Months" is the active one because the series behind both charts is
      monthly — a highlighted "Days" would describe a resolution this report
      never asked the API for. */
   .ws-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
-  .seg--boxed { gap: 0; border: 1px solid #d6d8dc; border-radius: 4px; overflow: hidden; }
-  .seg--boxed .seg-item { height: 24px; border-radius: 0; }
-  .seg--boxed .seg-item + .seg-item { border-left: 1px solid #d6d8dc; }
   .ws-tools .btn-outline { height: 26px; }
   .range { display: inline-flex; gap: 14px; font-size: 12.5px; color: var(--muted); }
   .range .active { color: var(--brand); font-weight: 600; border-bottom: 2px solid var(--brand); padding-bottom: 2px; }
@@ -1311,7 +1332,7 @@ export function renderOverviewReport({
           <span>1M</span><span>6M</span><span>1Y</span><span class="active">2Y</span><span>All time</span>
         </div>
         <div class="ws-tools">
-          <span class="seg seg--boxed">
+          <span class="seg">
             <span class="seg-item">Days</span>
             <span class="seg-item active">Months</span>
           </span>
