@@ -1,18 +1,19 @@
-/* eslint-disable max-lines, max-lines-per-function -- Domain Overview template mirrors spec A.1 — 5 tiles, sidebar distribution table, two charts (line + stacked bar) and a topic placeholder. Splitting fragments the section narrative across files. */
+/* eslint-disable max-lines, max-lines-per-function -- Domain Overview template mirrors the Semrush 2026 layout — breadcrumb, full-width SEO card (8 tiles), and a single unified section (sidebar + stacked charts). Splitting fragments the section narrative across files. */
 import type { ReportKind } from "@/server/lib/render/cache";
 import type {
+  BucketTrendPoint,
   CountryRow,
+  HistoricalKeywordBucket,
   KeywordBucket,
   OverviewReportData,
 } from "@/server/lib/render/reports/overview-report";
-import {
-  KEYWORD_BUCKETS,
-  KEYWORD_BUCKET_LABELS,
-} from "@/server/lib/render/reports/overview-report";
+import { KEYWORD_BUCKETS } from "@/server/lib/render/reports/overview-report";
 import {
   placeholderSvg,
-  renderLineChart,
-  renderStackedBarChart,
+  renderMultiLineChart,
+  renderStackedAreaChart,
+  renderStackedBar,
+  type TimeSeries,
 } from "@/server/lib/render/charts/charts";
 
 /**
@@ -20,36 +21,62 @@ import {
  *
  * Self-contained HTML sent to the renderer microservice for screenshotting.
  * Same brand surface as E1/E2 (inline `<style>`, no external CSS, lucide-style
- * inline SVG icons, palette from `templates/shell.ts`). Mirrors spec A.1:
+ * inline SVG icons). Mirrors the exact Semrush 2026 clone spec
+ * (`.dev/specs/semrush-2026-exact-clone-spec.md`).
  *
- *   - Header chips: domain, country, device, "Datos parciales" when degraded.
- *   - Tabs row: Visión general / Comparación de dominios / Crecimiento /
- *     Comparación por países (decorative — only the first is "active", the
- *     others are placeholders for the future, consistent with the spec).
- *   - 5 tiles in the leading row, matching Semrush's Domain Overview 2026:
- *     Puntuación autoridad (with degraded semi-donut gauge), Tráfico orgánico,
- *     Tráfico de pago, Cuota de tráfico, Backlinks. Tiles are columns inside
- *     one shared container separated by 1px vertical dividers (not 5 bordered
- *     cards) — see `.dev/specs/semrush-redesign-2026-findings.md` §"Qué SÍ
- *     hacer ahora".
- *   - Sidebar (left): "Distribución por países" table + "Temas clave"
- *     placeholder card (the dedicated topics endpoint is out of scope for E3).
- *   - Main column: "Tráfico orgánico" line chart (E3.4 stub today →
- *     honest placeholder) + "Palabras clave orgánicas" stacked bar chart
- *     (one column with 6 bucket segments).
- *   - Footer.
+ * All rendered copy is in English, matching the reference capture.
+ *
+ * Card count: the reference page has exactly 3 `Card` surfaces (AI Search,
+ * SEO, and `#widgetDistribution`). AI Search is out of scope (no data
+ * source), so we render **2**:
+ *
+ *   1. "SEO" — full width, 8 KPI tiles in 2 rows × 4 columns (Authority
+ *      Score, Organic Traffic, Paid Traffic, Referring Domains, Traffic
+ *      Share, Organic Keywords, Paid Keywords, Backlinks). Full width rather
+ *      than the original's 2/3 because reserving a third of the page for an
+ *      empty AI Search placeholder reads worse than not having it at all
+ *      (design review §3).
+ *   2. The unified section (`#widgetDistribution` equivalent) — a single card
+ *      with `324px 1fr` columns and no internal card borders:
+ *        - sidebar: "Distribution by Country" table + "Key Topics"
+ *          placeholder (our own addition; the topics endpoint is out of scope
+ *          for E3).
+ *        - main column: "Traffic" over "Keywords", separated by a hairline.
+ *          Both plot the monthly history from `historical_rank_overview` when
+ *          the domain has enough of one, and degrade to an honest placeholder
+ *          (Traffic) or today's distribution bar (Keywords) when it doesn't —
+ *          see {@link MIN_HISTORY_POINTS}.
+ *
+ * Above them: breadcrumb + header chips (country, device, report date,
+ * "Partial data" when degraded — the domain itself lives only in the `<h1>`,
+ * see the design review's H10) and the decorative tab strip (only "Overview"
+ * is active; the real Semrush tabs are `display:none` in the captured state,
+ * so there is no better reference).
  */
 
 const REPORT_TITLES: Record<ReportKind, string> = {
-  backlinks: "Informe de backlinks",
-  competitors: "Comparación de dominios",
-  overview: "Visión general del dominio",
+  backlinks: "Backlinks Report",
+  competitors: "Domain Comparison",
+  overview: "Domain Overview",
 };
 
 const DEVICE_LABELS: Record<string, string> = {
-  desktop: "Escritorio",
-  mobile: "Móvil",
+  desktop: "Desktop",
+  mobile: "Mobile",
   tablet: "Tablet",
+};
+
+/** English bucket labels for the keyword chart. The service's
+ *  `KEYWORD_BUCKET_LABELS` is still Spanish and belongs to the data layer;
+ *  rendered copy is the template's responsibility, so the legend text lives
+ *  here while the ordering keeps coming from `KEYWORD_BUCKETS`. */
+const BUCKET_LABELS: Record<KeywordBucket, string> = {
+  top3: "Top 3",
+  rank4to10: "4–10",
+  rank11to20: "11–20",
+  rank21to50: "21–50",
+  rank51to100: "51–100",
+  serpFeatures: "SERP features",
 };
 
 export type OverviewTemplateInput = {
@@ -58,6 +85,11 @@ export type OverviewTemplateInput = {
   country: string;
   device: string;
   data: OverviewReportData;
+  /** Flag SVG markup by ISO alpha-2 code, resolved by the caller via
+   *  `loadCountryFlags`. Required rather than defaulted: a template that
+   *  quietly renders no flags when nobody passes any is how the flags go
+   *  missing again without anything failing. */
+  flags: Record<string, string>;
 };
 
 function escapeHtml(value: string): string {
@@ -69,73 +101,68 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const NUMBER_FMT = new Intl.NumberFormat("es-ES", {
+const NUMBER_FMT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-const PERCENT_FMT = new Intl.NumberFormat("es-ES", {
+const PERCENT_FMT = new Intl.NumberFormat("en-US", {
   style: "percent",
   maximumFractionDigits: 0,
 });
 
+const EMPTY_VALUE = "N/A";
+
 function fmtNumber(value: number | null): string {
-  return value == null ? "—" : NUMBER_FMT.format(value);
+  return value == null ? EMPTY_VALUE : NUMBER_FMT.format(value);
 }
 
 function fmtPercent(value: number | null): string {
-  return value == null ? "—" : PERCENT_FMT.format(value);
+  return value == null ? EMPTY_VALUE : PERCENT_FMT.format(value);
+}
+
+const DATE_FMT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+const DATETIME_FMT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** Inline flag markup for a country row. Flags must be *drawn*, not typed:
+ *  the emoji this used to emit depends on a colour emoji font the renderer's
+ *  Chromium image doesn't ship, so it degraded to bare "ES" letterforms. The
+ *  artwork arrives pre-resolved via `flags` (see `country-flags.ts` for why it
+ *  isn't imported here). "WW" (worldwide) is an aggregate, not a country — it
+ *  gets the globe icon. A code with no artwork gets nothing rather than a
+ *  wrong flag; the row's label already names the country. */
+function countryFlagIcon(code: string, flags: Record<string, string>): string {
+  const upper = code.toUpperCase();
+  if (upper === "WW") return ICONS.globe;
+  const flag = flags[upper];
+  return flag === undefined ? "" : `<span class="flag">${flag}</span>`;
+}
+
+/** The service labels the aggregate row in Spanish ("Todo el mundo"); every
+ *  other row is already the bare ISO code. Translate at render time so the
+ *  data layer stays untouched. */
+function countryDisplayLabel(row: CountryRow): string {
+  return row.countryCode.toUpperCase() === "WW"
+    ? "Worldwide"
+    : row.countryLabel;
 }
 
 /* ----------------------------- Icons ----------------------------- */
 
 const ICONS = {
-  authority: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"></path></svg>`,
-  traffic: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"></path><path d="M17 7h4v4"></path></svg>`,
-  paid: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M7 10h2M7 14h6"></path></svg>`,
-  backlinks: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg>`,
-  share: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>`,
+  globe: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path></svg>`,
+  donut: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 3a9 9 0 0 1 9 9h-9z" fill="currentColor" stroke="none"></path></svg>`,
 } as const;
-
-/* ----------------------------- Authority semidonut ----------------------------- */
-
-/**
- * Degraded semi-donut gauge for the Puntuación de autoridad tile. The two
- * stops are the oklch tones confirmed in the Semrush 2026 dump
- * (`.dev/specs/semrush-redesign-2026-findings.md` §"Authority Score"). The
- * SVG is hand-rolled — no new dependency, same inline-SVG pattern as
- * `ICONS.*`. Value is 0–100; we draw the filled arc proportional to it.
- */
-function renderAuthoritySemidonut(value: number): string {
-  const clamped = Math.max(0, Math.min(100, value));
-  // Geometry: half-donut opening downward (semicircle on the top half).
-  // viewBox 0..120 × 0..72 — radius 52, center (60, 60), arc from 180° to 0°.
-  const r = 52;
-  const cx = 60;
-  const cy = 60;
-  // Path for a full half-circle (180° → 0°) using arc flags large-arc=0, sweep=1.
-  const fullHalf = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
-  // Sweep length proportional to value (0..100 → 0..180°).
-  const sweepDeg = (clamped / 100) * 180;
-  const endAngleRad = (Math.PI * (180 - sweepDeg)) / 180;
-  const ex = cx + r * Math.cos(endAngleRad);
-  const ey = cy - r * Math.sin(endAngleRad);
-  const largeArc = sweepDeg > 180 ? 1 : 0;
-  const valueArc =
-    sweepDeg <= 0
-      ? ""
-      : `M ${cx - r} ${cy} A ${r} ${r} 0 ${largeArc} 1 ${ex.toFixed(2)} ${ey.toFixed(2)}`;
-  // Track (background half-donut) underneath, very light.
-  return `<svg class="authority-arc" viewBox="0 0 120 72" width="80" height="48" aria-hidden="true">
-    <defs>
-      <linearGradient id="authority-grad" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0%" stop-color="oklch(0.53 0.157 279.2)" />
-        <stop offset="100%" stop-color="oklch(0.53 0.142 170)" />
-      </linearGradient>
-    </defs>
-    <path d="${fullHalf}" fill="none" stroke="#e4e9f0" stroke-width="8" stroke-linecap="round" />
-    ${valueArc ? `<path d="${valueArc}" fill="none" stroke="url(#authority-grad)" stroke-width="8" stroke-linecap="round" />` : ""}
-  </svg>`;
-}
 
 /* ----------------------------- Tiles ----------------------------- */
 
@@ -143,20 +170,31 @@ type Tile = {
   label: string;
   value: string;
   sub: string;
-  icon: string;
-  warning?: boolean;
-  gauge?: string;
+  icon?: string;
 };
 
+const TILES_PER_ROW = 4;
+
+/** 2 rows × 4 columns, matching the confirmed Semrush 2026 "SEO" card grid
+ *  (`.dev/specs/semrush-2026-exact-clone-spec.md` §6). */
 function renderTiles(tiles: Tile[]): string {
-  return tiles
+  const rows: Tile[][] = [];
+  for (let i = 0; i < tiles.length; i += TILES_PER_ROW) {
+    rows.push(tiles.slice(i, i + TILES_PER_ROW));
+  }
+  return rows
     .map(
-      (t) => `
-    <div class="tile ${t.warning ? "tile-warn" : ""}">
-      <div class="tile-label">${t.icon}${escapeHtml(t.label)}</div>
-      ${t.gauge ? `<div class="tile-gauge">${t.gauge}</div>` : ""}
-      <div class="tile-value">${escapeHtml(t.value)}</div>
-      <div class="tile-sub">${escapeHtml(t.sub)}</div>
+      (row) => `
+    <div class="tiles-row">${row
+      .map(
+        (t) => `
+      <div class="tile">
+        <div class="tile-label">${t.icon ?? ""}${escapeHtml(t.label)}</div>
+        <div class="tile-value${t.value === EMPTY_VALUE ? " tile-value--empty" : ""}">${escapeHtml(t.value)}</div>
+        ${t.sub ? `<div class="tile-sub">${escapeHtml(t.sub)}</div>` : ""}
+      </div>`,
+      )
+      .join("")}
     </div>`,
     )
     .join("");
@@ -164,27 +202,23 @@ function renderTiles(tiles: Tile[]): string {
 
 /* ----------------------------- Distribution table ----------------------------- */
 
-function countryRows(rows: CountryRow[]): string {
+function countryRows(
+  rows: CountryRow[],
+  flags: Record<string, string>,
+): string {
   if (rows.length === 0) {
-    return `<tr><td colspan="4" class="muted center">Sin datos</td></tr>`;
+    return `<tr><td colspan="4" class="muted center">No data</td></tr>`;
   }
   return rows
     .map((r) => {
-      const flag = r.countryCode === "WW" ? "🌐" : "🇪🇸";
       return `<tr>
-        <td>${flag} ${escapeHtml(r.countryLabel)}</td>
+        <td>${countryFlagIcon(r.countryCode, flags)} ${escapeHtml(countryDisplayLabel(r))}</td>
         <td class="num">${fmtPercent(r.share)}</td>
         <td class="num">${fmtNumber(r.traffic)}</td>
         <td class="num">${fmtNumber(r.keywords)}</td>
       </tr>`;
     })
     .join("");
-}
-
-/* ----------------------------- Trend ----------------------------- */
-
-function hasTrendData(points: { value: number | null }[]): boolean {
-  return points.some((p) => p.value != null);
 }
 
 /* ----------------------------- Buckets ----------------------------- */
@@ -202,14 +236,166 @@ const BUCKET_COLORS: Record<KeywordBucket, string> = {
   serpFeatures: "#22c55e",
 };
 
+/** Nominal chart canvas — the full width of the unified section's main
+ *  column (1216 shell − 40 padding − 324 sidebar − 16 gap = 836), so
+ *  `width:100%; height:auto` scales SVG text at the size it was authored at
+ *  instead of stretching a small canvas (see the design review's H3). */
+const CHART_WIDTH = 836;
+const CHART_HEIGHT = 260;
+/** Legend row + the 24px bar — the bucket split is a proportion, not a
+ *  series, so it doesn't need a 260px canvas (design review finding F). */
+const BAR_CHART_HEIGHT = 54;
+
 function stackedBarFromBuckets(counts: Record<KeywordBucket, number>): string {
   const segments = KEYWORD_BUCKETS.map((b) => ({
-    label: KEYWORD_BUCKET_LABELS[b],
+    label: BUCKET_LABELS[b],
     value: counts[b] ?? 0,
     color: BUCKET_COLORS[b],
   }));
-  return renderStackedBarChart([{ label: "Hoy", segments }]);
+  // `renderStackedBar` is shared with the Spanish backlinks/competitors
+  // templates and falls back to a Spanish placeholder on an all-zero chart —
+  // render our own English one instead of leaking that string in here.
+  if (segments.every((s) => s.value <= 0)) {
+    return placeholderSvg("No data", {
+      width: CHART_WIDTH,
+      height: BAR_CHART_HEIGHT,
+    });
+  }
+  return renderStackedBar(segments, { width: CHART_WIDTH });
 }
+
+/* ----------------------------- History ----------------------------- */
+
+/**
+ * How many real monthly samples a series needs before it is drawn as a trend.
+ *
+ * Three, for two reasons that agree: `smoothPath` only starts curving at three
+ * points (two draw a bare segment, which reads as a claim about a direction
+ * two samples cannot support), and a domain DataForSEO has tracked for one or
+ * two months is exactly the case the "not enough history" copy was written
+ * for. Below the threshold the block falls back rather than drawing a line
+ * through almost nothing.
+ */
+const MIN_HISTORY_POINTS = 3;
+
+function realPointCount(points: { value: number | null }[]): number {
+  return points.filter((p) => p.value != null).length;
+}
+
+/** Series markup + the footnote that describes what was actually drawn — the
+ *  two always change together, so a chart can never end up under a caption
+ *  written for the other branch. */
+type ChartBlock = { svg: string; foot: string };
+
+const TRAFFIC_PLACEHOLDER =
+  "Not enough history yet — accumulates from the first render";
+
+function trafficChart(
+  trend: OverviewReportData["charts"]["trafficTrend"],
+): ChartBlock {
+  const { points, paidPoints } = trend.value;
+  if (trend.source !== "ok" || realPointCount(points) < MIN_HISTORY_POINTS) {
+    return {
+      svg: placeholderSvg(TRAFFIC_PLACEHOLDER, {
+        width: CHART_WIDTH,
+        height: CHART_HEIGHT,
+      }),
+      foot: TRAFFIC_PLACEHOLDER,
+    };
+  }
+
+  const series: TimeSeries[] = [
+    { label: "Organic Traffic", color: "#1f6feb", points },
+  ];
+  // The chart samples every series on the first one's dates, so a paid series
+  // of a different length would be read off the wrong months. A paid series
+  // that is empty or too short is dropped entirely: `renderMultiLineChart`
+  // floors a missing value at 0, so plotting it would draw a confident flat
+  // line along the axis for a domain that simply has no ads data.
+  if (
+    paidPoints.length === points.length &&
+    realPointCount(paidPoints) >= MIN_HISTORY_POINTS
+  ) {
+    series.push({ label: "Paid Traffic", color: "#14b8a6", points: paidPoints });
+  }
+
+  return {
+    svg: renderMultiLineChart(series, {
+      width: CHART_WIDTH,
+      height: CHART_HEIGHT,
+    }),
+    foot: `Estimated monthly traffic over the last ${points.length} months${
+      series.length === 1 ? " · no paid presence in this window" : ""
+    }`,
+  };
+}
+
+/** Bottom-to-top stacking order, which is why the buckets run backwards from
+ *  the legend order used by the distribution bar: the reference puts the
+ *  fattest bucket (51–100) at the base and Top 3 as the thin band riding on
+ *  top. `serpFeatures` is absent by design — the monthly history carries no
+ *  counter for it (see `HistoricalKeywordBucket`), and back-filling one would
+ *  be inventing data. */
+function bucketTrendSeries(points: BucketTrendPoint[]): TimeSeries[] {
+  return KEYWORD_BUCKETS.filter(
+    (b): b is HistoricalKeywordBucket => b !== "serpFeatures",
+  )
+    .reverse()
+    .map((bucket) => ({
+      label: BUCKET_LABELS[bucket],
+      color: BUCKET_COLORS[bucket],
+      points: points.map((p) => ({ date: p.date, value: p.counts[bucket] })),
+    }));
+}
+
+/** A month where every bucket is zero is a month the domain wasn't tracked,
+ *  not a month it ranked for nothing. */
+function trackedMonthCount(points: BucketTrendPoint[]): number {
+  return points.filter((p) => Object.values(p.counts).some((n) => n > 0))
+    .length;
+}
+
+/**
+ * Keywords is one chart, not two: with history it is the stacked area, and
+ * without it, today's distribution bar.
+ *
+ * They are alternatives rather than neighbours because they are not the same
+ * measurement. The bar is a *proportion* of the `RANKED_KEYWORDS_LIMIT`
+ * sampled keywords; the area plots the endpoint's *absolute* per-position
+ * counts for the whole domain. Stacking one under the other in the same block
+ * invites a reader to compare a 200-keyword sample against a six-figure total,
+ * and the reference draws only the area here anyway.
+ */
+function keywordsChart(charts: OverviewReportData["charts"]): ChartBlock {
+  const trend = charts.keywordBucketTrend;
+  const months = trend.value.points;
+  const counts = charts.keywordBuckets.value.counts;
+
+  if (trend.source === "ok" && trackedMonthCount(months) >= MIN_HISTORY_POINTS) {
+    const serpToday = counts.serpFeatures;
+    return {
+      svg: renderStackedAreaChart(bucketTrendSeries(months), {
+        width: CHART_WIDTH,
+        height: CHART_HEIGHT,
+      }),
+      foot:
+        `Organic keywords by position over the last ${months.length} months` +
+        (serpToday > 0
+          ? ` · ${NUMBER_FMT.format(serpToday)} SERP features today, excluded (no monthly history)`
+          : ""),
+    };
+  }
+
+  const sampled = Object.values(counts).reduce((acc, n) => acc + n, 0);
+  return {
+    svg: stackedBarFromBuckets(counts),
+    foot: `Current distribution — ${NUMBER_FMT.format(sampled)} keywords sampled (${NUMBER_FMT.format(RANKED_KEYWORDS_SAMPLE)} max)`,
+  };
+}
+
+/** Mirrors `RANKED_KEYWORDS_LIMIT` in the service — quoted in the bar's
+ *  footnote so the sample size is never mistaken for the domain's total. */
+const RANKED_KEYWORDS_SAMPLE = 200;
 
 /* ----------------------------- Top-level ----------------------------- */
 
@@ -219,100 +405,103 @@ export function renderOverviewReport({
   country,
   device,
   data,
+  flags,
 }: OverviewTemplateInput): string {
   const title = REPORT_TITLES[report];
   const deviceLabel = DEVICE_LABELS[device] ?? device;
+  // 8 tiles in 2 rows × 4 columns, matching the Semrush 2026 "SEO" card
+  // (`.dev/specs/semrush-2026-exact-clone-spec.md` §6) — not the 5-tile
+  // single row from the old design. No deltas (+/-%) are shown: the tiles come
+  // from the present-day endpoints, and pairing them with a prior month off
+  // the history series would compare two differently-scoped measurements.
   const tiles: Tile[] = [
     {
-      label: "Puntuación de autoridad",
+      label: "Authority Score",
       value:
-        data.tiles.authority.source === "ok"
+        data.tiles.authority.value != null
           ? String(data.tiles.authority.value)
-          : "—",
-      sub: `composición: rank ${data.tiles.authorityComposition.rank ?? "—"}${
+          : EMPTY_VALUE,
+      sub: `rank composition: ${data.tiles.authorityComposition.rank ?? "—"}${
         data.tiles.authorityComposition.spamPenalty > 0
           ? ` · −${data.tiles.authorityComposition.spamPenalty} spam`
           : ""
       }`,
-      icon: ICONS.authority,
-      gauge:
-        data.tiles.authority.source === "ok" &&
-        data.tiles.authority.value != null
-          ? renderAuthoritySemidonut(data.tiles.authority.value)
+    },
+    {
+      label: "Organic Traffic",
+      value: fmtNumber(data.tiles.organicTraffic.value),
+      sub:
+        data.tiles.organicTraffic.value == null
+          ? "no data for this period"
           : "",
     },
     {
-      label: "Tráfico orgánico",
-      value: fmtNumber(data.tiles.organicTraffic.value),
-      sub:
-        data.tiles.organicTraffic.source === "error"
-          ? "datos no disponibles"
-          : data.tiles.organicKeywords.value != null
-            ? `Palabras ${NUMBER_FMT.format(data.tiles.organicKeywords.value)}`
-            : "estimación mensual (Labs)",
-      icon: ICONS.traffic,
-      warning: data.tiles.organicTraffic.source === "error",
-    },
-    {
-      label: "Tráfico de pago",
+      label: "Paid Traffic",
       value: fmtNumber(data.tiles.paidTraffic.value),
       sub:
-        data.tiles.paidTraffic.source === "error"
-          ? "datos no disponibles"
-          : "Si está en 0 → no hay campaña activa",
-      icon: ICONS.paid,
-      warning: data.tiles.paidTraffic.source === "error",
+        data.tiles.paidTraffic.value == null
+          ? "no data for this period"
+          : data.tiles.paidTraffic.value === 0
+            ? "0 means no active campaign"
+            : "",
     },
     {
-      label: "Cuota de tráfico",
+      label: "Referring Domains",
+      value: fmtNumber(data.tiles.referringDomains.value),
+      sub:
+        data.tiles.referringDomains.value == null
+          ? "no data for this period"
+          : "",
+      icon: ICONS.globe,
+    },
+    {
+      label: "Traffic Share",
       value:
         data.tiles.trafficShare.value != null
           ? PERCENT_FMT.format(data.tiles.trafficShare.value)
-          : "n/d",
+          : EMPTY_VALUE,
       sub:
         data.tiles.competitorsCount.value != null
-          ? `Competidores ${NUMBER_FMT.format(data.tiles.competitorsCount.value)}`
-          : "tráfico del país vs el mundo",
-      icon: ICONS.share,
+          ? `Competitors ${NUMBER_FMT.format(data.tiles.competitorsCount.value)}`
+          : "",
+      icon: ICONS.donut,
+    },
+    {
+      label: "Organic Keywords",
+      value: fmtNumber(data.tiles.organicKeywords.value),
+      sub:
+        data.tiles.organicKeywords.value == null
+          ? "no data for this period"
+          : "",
+    },
+    {
+      label: "Paid Keywords",
+      value: fmtNumber(data.tiles.paidKeywords.value),
+      sub:
+        data.tiles.paidKeywords.value == null ? "no data for this period" : "",
     },
     {
       label: "Backlinks",
       value: fmtNumber(data.tiles.backlinks.value),
-      sub:
-        data.tiles.referringDomains.value != null
-          ? `Dominios de ref. ${NUMBER_FMT.format(data.tiles.referringDomains.value)}`
-          : "totales registrados por DataForSEO",
-      icon: ICONS.backlinks,
-      warning: data.tiles.backlinks.source === "error",
+      sub: data.tiles.backlinks.value == null ? "no data for this period" : "",
+      icon: ICONS.globe,
     },
   ];
 
-  const trendSvg =
-    data.charts.trafficTrend.value.points.length > 0 &&
-    hasTrendData(data.charts.trafficTrend.value.points)
-      ? renderLineChart(data.charts.trafficTrend.value.points, {
-          width: 480,
-          height: 200,
-          color: "#1f6feb",
-        })
-      : placeholderSvg(
-          "Aún no hay histórico suficiente — se acumula desde el primer render",
-        );
-
-  const bucketsSvg = stackedBarFromBuckets(
-    data.charts.keywordBuckets.value.counts,
-  );
+  const traffic = trafficChart(data.charts.trafficTrend);
+  const keywords = keywordsChart(data.charts);
 
   const countriesRows = countryRows(
     data.tables.countries.source === "ok" ? data.tables.countries.value : [],
+    flags,
   );
 
-  const keywordTotal = Object.values(
-    data.charts.keywordBuckets.value.counts,
-  ).reduce((acc, n) => acc + n, 0);
+  const now = new Date();
+  const generatedDate = DATE_FMT.format(now);
+  const generatedDateTime = DATETIME_FMT.format(now);
 
   return `<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -324,10 +513,9 @@ export function renderOverviewReport({
     --text: #1f2933;
     --muted: #6b7785;
     --border: #e4e9f0;
-    --brand: #1f6feb;
+    --brand: oklch(0.53 0.157 279.2);
     --accent: #14b8a6;
-    --warn: #ef4444;
-    --warn-bg: #fff1f2;
+    --card-shadow: rgba(0, 21, 16, 0.07) 0 0 1px 0, rgba(0, 21, 16, 0.07) 0 1px 3px 0;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -336,12 +524,17 @@ export function renderOverviewReport({
     background: var(--bg); color: var(--text); padding: 32px;
   }
   .shell { max-width: 1216px; margin: 0 auto; }
-  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .breadcrumb {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 14px; color: var(--muted); margin-bottom: 8px;
+  }
+  .breadcrumb .current { color: var(--text); }
+  h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.02em; }
   h2 { font-size: 16px; margin: 24px 0 12px; color: var(--text); }
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+  .chips { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 24px; align-items: center; }
   .chip {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px; height: 28px;
+    padding: 0 12px; border-radius: 6px; font-size: 13px; font-weight: 500;
     background: var(--card); border: 1px solid var(--border); color: var(--muted);
   }
   .chip svg { width: 14px; height: 14px; }
@@ -360,52 +553,71 @@ export function renderOverviewReport({
     border-bottom-color: var(--brand);
   }
 
-  .tiles {
-    display: flex; align-items: stretch;
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 24px;
-    overflow: hidden;
+  /* 2 rows × 4 columns; proportional fr columns + a hairline divider
+     between tiles (design review H5). */
+  .tiles { display: flex; flex-direction: column; gap: 36px; }
+  .tiles-row {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr 1fr;
+    column-gap: 0;
   }
-  .tile {
-    flex: 0 0 auto; width: 150px;
-    padding: 14px 14px 12px;
-    border-right: 1px solid var(--border);
-    position: relative;
-  }
-  .tile:last-child { border-right: 0; }
+  .tile { min-width: 0; padding: 0 24px; border-radius: 6px; }
+  .tile:first-child { padding-left: 0; }
+  .tile + .tile { border-left: 1px solid rgba(0, 12, 8, 0.16); }
   .tile-label {
     display: flex; align-items: center; gap: 6px;
-    font-size: 13px; font-weight: 600; color: var(--muted);
+    font-size: 14px; font-weight: 400; line-height: 19.88px;
+    color: rgba(1, 5, 0, 0.898); text-transform: capitalize;
     margin-bottom: 8px;
   }
-  .tile-label svg { color: var(--brand); width: 14px; height: 14px; }
-  .tile-gauge { margin: 4px 0 2px; }
-  .tile-gauge svg { display: block; }
-  .tile-value { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+  .tile-label svg { color: var(--muted); width: 14px; height: 14px; flex-shrink: 0; }
+  .tile-value { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--brand); }
+  .tile-value--empty { color: var(--muted); font-weight: 600; }
   .tile-sub { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.3; }
-  .tile-warn { background: var(--warn-bg); }
-  .tile-warn .tile-label { color: var(--warn); }
 
-  .layout {
-    display: grid; grid-template-columns: 320px 1fr; gap: 16px;
+  /* Cards carry a double hairline shadow, no border — verified against the
+     reference dump (design review §1 bis). */
+  .card {
+    background: var(--card); border: 0;
+    border-radius: 8px; padding: 20px;
+    box-shadow: var(--card-shadow);
     margin-bottom: 24px;
   }
-  .layout-column { display: flex; flex-direction: column; gap: 16px; }
-  .card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 8px; padding: 18px;
+
+  /* The unified lower section: one card, sidebar + stacked charts, no
+     internal card surfaces (design review H1 — the 324px sidebar and 16px
+     gap are literal values from the reference). */
+  .section {
+    display: grid; grid-template-columns: 324px 1fr;
+    column-gap: 16px; align-items: start;
   }
+  .section-side { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
+  .section-main { display: flex; flex-direction: column; min-width: 0; }
+  .chart-block + .chart-block {
+    margin-top: 32px; padding-top: 32px; border-top: 1px solid var(--border);
+  }
+
   .card-head {
     display: flex; align-items: baseline; justify-content: space-between;
     margin-bottom: 12px;
   }
-  .card-head h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+  .card-head h3 { margin: 0; font-size: 16px; font-weight: 700; line-height: 24px; color: rgba(1, 5, 0, 0.898); }
   .card-head .muted { font-size: 12px; color: var(--muted); }
   .muted { color: var(--muted); }
   .center { text-align: center; }
-  .chart-body { display: flex; justify-content: center; align-items: center; min-height: 200px; }
-  .chart-body svg { width: 100%; height: auto; max-height: 320px; }
+  .badge {
+    display: inline-flex; align-items: center; height: 28px; padding: 0 20px;
+    font-size: 14px; font-weight: 500; line-height: 20px;
+    background: rgb(231, 229, 255); color: rgb(92, 83, 217);
+    border-radius: 6px 0 12px 0;
+  }
+  /* The badge is a corner tab, not a chip floating inside the card: measured
+     on the reference crop its origin is the card's own origin (0,0), so it
+     has to escape the card's 20px padding. The asymmetric radius above only
+     makes sense in that position. */
+  .card-seo .card-head { margin: -20px 0 18px -20px; }
+  .chart-body { display: block; }
+  .chart-body svg { width: 100%; height: auto; }
   .chart-foot { font-size: 11px; color: var(--muted); margin-top: 8px; padding: 0 4px; }
 
   table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -413,12 +625,21 @@ export function renderOverviewReport({
   table.data th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
   table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
   table.data tr:last-child td { border-bottom: 0; }
+  /* 3:2 is the aspect the flag SVGs are authored at; the hairline ring keeps
+     the white-heavy flags (JP, PL) from dissolving into the row. */
+  .flag {
+    display: inline-block; width: 18px; height: 12px; vertical-align: -1px;
+    border-radius: 2px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(0, 12, 8, 0.12);
+  }
+  .flag svg { display: block; width: 100%; height: 100%; }
 
   .topic-card {
     text-align: center;
     padding: 28px 18px;
     background: linear-gradient(180deg, #f0f6ff 0%, #fafbff 100%);
     border: 1px solid var(--border);
+    border-radius: 6px;
   }
   .topic-card .topic-help {
     display: inline-block; padding: 6px 12px; border-radius: 999px;
@@ -434,86 +655,94 @@ export function renderOverviewReport({
 </head>
 <body>
   <div class="shell">
+    <nav class="breadcrumb">
+      <span>Home</span>
+      <span>›</span>
+      <span>SEO</span>
+      <span>›</span>
+      <span class="current">Domain Overview</span>
+    </nav>
     <h1>${escapeHtml(title)}: <span style="font-weight:500;color:var(--muted)">${escapeHtml(domain)}</span></h1>
     <div class="chips">
       <span class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path></svg>
-        ${escapeHtml(domain)}
-      </span>
-      <span class="chip">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-        País: ${escapeHtml(country.toUpperCase())}
+        Country: ${escapeHtml(country.toUpperCase())}
       </span>
       <span class="chip">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
         ${escapeHtml(deviceLabel)}
       </span>
-      ${data.healthy ? "" : `<span class="chip" style="color:var(--warn);border-color:#fecaca;">Datos parciales</span>`}
+      <span class="chip">${escapeHtml(generatedDate)}</span>
+      ${data.healthy ? "" : `<span class="chip" style="color:#92660a;border-color:#f3e0b5;background:#fdf8ec;">Partial data</span>`}
     </div>
 
     <div class="tabs">
-      <span class="tab active">Visión general</span>
-      <span class="tab">Comparación de dominios</span>
-      <span class="tab">Crecimiento</span>
-      <span class="tab">Comparación por países</span>
+      <span class="tab active">Overview</span>
+      <span class="tab">Domain Comparison</span>
+      <span class="tab">Growth</span>
+      <span class="tab">Country Comparison</span>
     </div>
 
-    <div class="tiles">${renderTiles(tiles)}</div>
-
-    <div class="layout">
-      <div class="layout-column">
-        <div class="card">
-        <div class="card-head">
-          <h3>Distribución por países</h3>
-          <span class="muted">tráfico y kws</span>
-        </div>
-        <table class="data">
-          <thead><tr>
-            <th>País</th>
-            <th class="num">Cuota</th>
-            <th class="num">Tráfico</th>
-            <th class="num">Palabras</th>
-          </tr></thead>
-          <tbody>${countriesRows}</tbody>
-        </table>
-        <div class="chart-foot">⚠️ cuota = tráfico del país / tráfico mundial</div>
-        </div>
-
-        <div class="card">
-        <div class="card-head">
-          <h3>Temas clave</h3>
-          <span class="muted">pendiente E3.3</span>
-        </div>
-        <div class="topic-card">
-          <div class="topic-help">Consulta los temas clave de ${escapeHtml(domain)}</div>
-          <p class="muted" style="margin-top:12px;font-size:12px;">Ver temas</p>
-        </div>
-        </div>
+    <div class="card card-seo">
+      <div class="card-head">
+        <span class="badge">SEO</span>
       </div>
+      <div class="tiles">${renderTiles(tiles)}</div>
+    </div>
 
-      <div class="layout-column">
-        <div class="card chart">
+    <div class="card section">
+      <aside class="section-side">
+        <div class="side-block">
           <div class="card-head">
-            <h3>Tráfico orgánico (histórico)</h3>
-            <span class="muted">2 años · 1M / 6M / 1A / 2A / Todo</span>
+            <h3>Distribution by Country</h3>
           </div>
-          <div class="chart-body">${trendSvg}</div>
-          <div class="chart-foot">⚠️ histórico se acumula desde el primer render (E3.4)</div>
+          <table class="data">
+            <thead><tr>
+              <th>Country</th>
+              <th class="num">Share</th>
+              <th class="num">Traffic</th>
+              <th class="num">Keywords</th>
+            </tr></thead>
+            <tbody>${countriesRows}</tbody>
+          </table>
+          <div class="chart-foot">share = country traffic / worldwide traffic</div>
         </div>
 
-        <div class="card chart">
+        <div class="side-block">
           <div class="card-head">
-            <h3>Palabras clave orgánicas · Distribución por bucket</h3>
-            <span class="muted">Top 3 · 4–10 · 11–20 · 21–50 · 51–100 · SERP</span>
+            <h3>Key Topics</h3>
+            <span class="muted">coming soon</span>
           </div>
-          <div class="chart-body">${bucketsSvg}</div>
-          <div class="chart-foot">Total ${NUMBER_FMT.format(keywordTotal)} kws muestreadas (${NUMBER_FMT.format(200)} máx.)</div>
+          <div class="topic-card">
+            <div class="topic-help">Explore the key topics for ${escapeHtml(domain)}</div>
+            <p class="muted" style="margin-top:12px;font-size:12px;">View topics</p>
+          </div>
+        </div>
+      </aside>
+
+      <div class="section-main">
+        <div class="chart-block">
+          <div class="card-head">
+            <h3>Traffic</h3>
+            <span class="muted">1M / 6M / 1Y / 2Y / All time</span>
+          </div>
+          <div class="chart-body">${traffic.svg}</div>
+          <div class="chart-foot">${escapeHtml(traffic.foot)}</div>
+        </div>
+
+        <div class="chart-block">
+          <div class="card-head">
+            <h3>Keywords</h3>
+          </div>
+          <div class="chart-body">${keywords.svg}</div>
+          <div class="chart-foot">${escapeHtml(keywords.foot)}</div>
         </div>
       </div>
     </div>
 
     <div class="footer">
-      <span>Datos propios (DataForSEO)</span>
+      <span>Data via DataForSEO</span>
+      <span>Generated: ${escapeHtml(generatedDateTime)}</span>
       <span>${escapeHtml(report)} · ${escapeHtml(country.toUpperCase())} · ${escapeHtml(deviceLabel)}</span>
     </div>
   </div>

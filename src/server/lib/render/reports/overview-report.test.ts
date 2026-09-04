@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Covers the whole Overview report contract (fan-out, degradation, bucketing, history) against one shared set of hoisted fetch mocks; splitting would duplicate that mock setup per file. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/server/lib/runtime-env", () => ({
@@ -12,6 +13,7 @@ vi.mock("@/server/lib/dataforseoBillingClassification", () => ({
 const overviewMock = vi.hoisted(() => vi.fn());
 const rankedMock = vi.hoisted(() => vi.fn());
 const serpCompetitorsMock = vi.hoisted(() => vi.fn());
+const historicalMock = vi.hoisted(() => vi.fn());
 
 /* eslint-disable @typescript-eslint/consistent-type-imports */
 vi.mock("@/server/lib/dataforseo/labs", async () => {
@@ -21,6 +23,7 @@ vi.mock("@/server/lib/dataforseo/labs", async () => {
     fetchDomainRankOverview: overviewMock,
     fetchRankedKeywords: rankedMock,
     fetchSerpCompetitors: serpCompetitorsMock,
+    fetchHistoricalRankOverview: historicalMock,
   };
 });
 
@@ -46,7 +49,7 @@ vi.mock("@/server/lib/dataforseo/backlinks", async () => {
 
 import {
   buildOverviewReportData,
-  getHistoricalTrafficSeries,
+  getHistoricalSeries,
   __test,
   KEYWORD_BUCKETS,
   KEYWORD_BUCKET_LABELS,
@@ -76,6 +79,14 @@ function rankedKeywordItem(rankGroup: number | null) {
       serp_item: rankGroup != null ? { rank_group: rankGroup } : {},
     },
   };
+}
+
+function historicalItem(
+  year: number,
+  month: number,
+  organic: Record<string, number>,
+) {
+  return { se_type: "google", year, month, metrics: { organic } };
 }
 
 beforeEach(() => {
@@ -124,6 +135,18 @@ beforeEach(() => {
       { domain: "c.com", serp_item: { rank_absolute: 3 } },
     ],
     billing: { costUsd: 0.02, path: ["dataforseo_labs", "serp_competitors"] },
+  });
+
+  historicalMock.mockReset();
+  historicalMock.mockResolvedValue({
+    data: [
+      historicalItem(2025, 2, { etv: 220, pos_1: 4, pos_2_3: 6 }),
+      historicalItem(2025, 1, { etv: 180, pos_1: 3, pos_2_3: 5 }),
+    ],
+    billing: {
+      costUsd: 0.106,
+      path: ["dataforseo_labs", "historical_rank_overview"],
+    },
   });
 });
 
@@ -316,14 +339,139 @@ describe("tiles", () => {
     expect(data.tiles.referringDomains.value).toBe(120);
     expect(data.tiles.trafficShare.value).toBeCloseTo(0.1, 5);
     expect(data.tiles.organicKeywords.value).toBe(50);
+    expect(data.tiles.paidKeywords.value).toBe(null); // paid.count not set
     expect(data.tiles.competitorsCount.value).toBe(3);
   });
 });
 
-describe("getHistoricalTrafficSeries (E3.4 stub)", () => {
-  it("returns an empty array — the E3.4 implementation will populate it", async () => {
-    const series = await getHistoricalTrafficSeries("example.com");
-    expect(series).toEqual([]);
+describe("getHistoricalSeries", () => {
+  const market = { locationCode: 2724, languageCode: "es", countryLabel: "ES" };
+
+  it("returns months oldest-first with organic etv as the traffic value", async () => {
+    const series = await getHistoricalSeries({
+      domain: "example.com",
+      market,
+      now: new Date("2025-03-15T00:00:00Z"),
+    });
+    expect(series.organicTraffic).toEqual([
+      { date: "2025-01", value: 180 },
+      { date: "2025-02", value: 220 },
+    ]);
+  });
+
+  it("omits the paid series when no month has paid data, rather than plotting zeroes", async () => {
+    const series = await getHistoricalSeries({ domain: "example.com", market });
+    expect(series.paidTraffic).toEqual([]);
+  });
+
+  it("returns the paid series when at least one month has paid etv", async () => {
+    historicalMock.mockResolvedValue({
+      data: [
+        {
+          se_type: "google",
+          year: 2025,
+          month: 1,
+          metrics: { organic: { etv: 180 }, paid: { etv: 40 } },
+        },
+      ],
+      billing: { costUsd: 0.106, path: [] },
+    });
+    const series = await getHistoricalSeries({ domain: "example.com", market });
+    expect(series.paidTraffic).toEqual([{ date: "2025-01", value: 40 }]);
+  });
+
+  it("requests a 24-month window ending in the current month", async () => {
+    await getHistoricalSeries({
+      domain: "example.com",
+      market,
+      now: new Date("2025-03-15T00:00:00Z"),
+    });
+    expect(historicalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: "example.com",
+        locationCode: 2724,
+        dateFrom: "2023-04-01",
+      }),
+    );
+  });
+
+  it("drops months the endpoint returned without a year/month", async () => {
+    historicalMock.mockResolvedValue({
+      data: [
+        { se_type: "google", metrics: { organic: { etv: 99 } } },
+        historicalItem(2025, 1, { etv: 180 }),
+      ],
+      billing: { costUsd: 0.106, path: [] },
+    });
+    const series = await getHistoricalSeries({ domain: "example.com", market });
+    expect(series.organicTraffic).toEqual([{ date: "2025-01", value: 180 }]);
+  });
+});
+
+describe("historical keyword buckets", () => {
+  it("folds the 12 position counters into the 5 historical buckets", () => {
+    expect(
+      __test.bucketCountsFromMetrics({
+        pos_1: 1,
+        pos_2_3: 2,
+        pos_4_10: 4,
+        pos_11_20: 8,
+        pos_21_30: 16,
+        pos_31_40: 32,
+        pos_41_50: 64,
+        pos_51_60: 128,
+        pos_61_70: 256,
+        pos_71_80: 512,
+        pos_81_90: 1024,
+        pos_91_100: 2048,
+      }),
+    ).toEqual({
+      top3: 3,
+      rank4to10: 4,
+      rank11to20: 8,
+      rank21to50: 112,
+      rank51to100: 3968,
+    });
+  });
+
+  it("treats a month with no organic metrics block as all-zero, not missing", () => {
+    expect(__test.bucketCountsFromMetrics(undefined)).toEqual({
+      top3: 0,
+      rank4to10: 0,
+      rank11to20: 0,
+      rank21to50: 0,
+      rank51to100: 0,
+    });
+  });
+
+  it("exposes the bucket history alongside the traffic series", async () => {
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+    expect(
+      data.charts.keywordBucketTrend.value.points.map((point) => [
+        point.date,
+        point.counts.top3,
+      ]),
+    ).toEqual([
+      ["2025-01", 8],
+      ["2025-02", 10],
+    ]);
+  });
+
+  it("degrades both history charts to empty on a rejected fetch", async () => {
+    historicalMock.mockRejectedValue(new Error("boom"));
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+    expect(data.charts.trafficTrend).toEqual({
+      value: { points: [], paidPoints: [] },
+      source: "error",
+    });
+    expect(data.charts.keywordBucketTrend.value.points).toEqual([]);
+    expect(data.healthy).toBe(false);
   });
 });
 

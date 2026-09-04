@@ -5,10 +5,12 @@ import {
   renderBarPairChart,
   renderDonutChart,
   renderLineChart,
+  renderMultiLineChart,
   renderNetworkGraph,
   renderPieChart,
   renderRadarChart,
-  renderStackedBarChart,
+  renderStackedAreaChart,
+  renderStackedBar,
   renderVennDiagram,
 } from "@/server/lib/render/charts/charts";
 import type {
@@ -183,36 +185,69 @@ describe("charts · E2 venn + donut", () => {
     expect(paths).toBeGreaterThanOrEqual(2);
   });
 
-  it("renderStackedBarChart draws one column with one rect per segment", () => {
-    const svg = renderStackedBarChart([
-      {
-        label: "Hoy",
-        segments: [
-          { label: "Top 3", value: 5 },
-          { label: "4–10", value: 7 },
-          { label: "11–20", value: 12 },
-        ],
-      },
-    ]);
+  it("renderStackedBar spans the full width, split by each segment's share", () => {
+    const svg = renderStackedBar(
+      [
+        { label: "Top 3", value: 5 },
+        { label: "4–10", value: 7 },
+        { label: "11–20", value: 12 },
+      ],
+      { width: 240 },
+    );
     expect(svg.startsWith("<svg")).toBe(true);
-    // 3 segments → 3 rects.
-    const rects = (svg.match(/<rect /g) ?? []).length;
-    expect(rects).toBeGreaterThanOrEqual(3);
-    // Legend includes every label.
-    expect(svg).toContain("Top 3");
-    expect(svg).toContain("4–10");
-    expect(svg).toContain("11–20");
+    // Segments are laid out left to right, each 1px short of its share so a
+    // white sliver separates it from the next; the last one ends at `width`.
+    expect(svg).toContain('x="0.0" y="30" width="49.0"'); // 5/24 * 240 = 50
+    expect(svg).toContain('x="50.0" y="30" width="69.0"'); // 7/24 * 240 = 70
+    expect(svg).toContain('x="120.0" y="30" width="119.0"'); // 12/24 * 240 = 120
+    // Legend includes every label with its value.
+    expect(svg).toContain("Top 3 5");
+    expect(svg).toContain("4–10 7");
+    expect(svg).toContain("11–20 12");
   });
 
-  it("renderStackedBarChart placeholder for empty columns", () => {
-    expect(renderStackedBarChart([])).toContain("Sin datos");
+  it("renderStackedBar placeholder when every segment is zero", () => {
+    expect(renderStackedBar([{ label: "x", value: 0 }])).toContain("Sin datos");
   });
 
-  it("renderStackedBarChart placeholder when every segment is zero", () => {
-    expect(
-      renderStackedBarChart([
-        { label: "Hoy", segments: [{ label: "x", value: 0 }] },
-      ]),
-    ).toContain("Sin datos");
+  it("renderStackedAreaChart stacks each series on top of the previous one", () => {
+    const dates = ["2025-01-01", "2025-02-01", "2025-03-01"];
+    const flat = (value: number) => dates.map((date) => ({ date, value }));
+    const svg = renderStackedAreaChart(
+      [
+        { label: "bottom", points: flat(200) },
+        { label: "top", points: flat(300) },
+      ],
+      { width: 300, height: 130 },
+    );
+    // The stacked total is 500, which the axis rounds up to 600 so the ticks
+    // land on 0 / 150 / 300 / 450 / 600 rather than 0 / 125 / 250 / 375 / 500.
+    expect(svg).toContain(">600<");
+    expect(svg).toContain(">0<");
+    // Band 1's ceiling is y=79.3 (200 of 600 up a 74px plot from y=104), and
+    // band 2 closes back down onto that same y: the bands touch rather than
+    // both starting from the baseline.
+    expect(svg).toContain('d="M 4.0 79.3 C');
+    expect(svg).toContain("L 248.0 79.3 C");
+  });
+
+  it("renderMultiLineChart draws one bare line per series", () => {
+    const svg = renderMultiLineChart([
+      { label: "organic", points: [{ date: "2025-01-01", value: 10 }] },
+      { label: "paid", points: [{ date: "2025-01-01", value: 4 }] },
+    ]);
+    expect((svg.match(/<path /g) ?? []).length).toBe(2);
+    // Point markers turn a dense series into a dotted band; the reference has
+    // none.
+    expect(svg).not.toContain("<circle");
+    expect(svg).toContain("organic");
+    expect(svg).toContain("paid");
+  });
+
+  it("time-series charts fall back to a placeholder without any history", () => {
+    expect(renderStackedAreaChart([])).toContain("Sin histórico");
+    expect(renderMultiLineChart([{ label: "x", points: [] }])).toContain(
+      "Sin histórico",
+    );
   });
 });

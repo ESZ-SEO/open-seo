@@ -16,6 +16,7 @@ import { renderOverviewReport } from "@/server/lib/render/templates/overview";
 import { buildBacklinksReportData } from "@/server/lib/render/reports/backlinks-report";
 import { buildCompetitorsReportData } from "@/server/lib/render/reports/competitors-report";
 import { buildOverviewReportData } from "@/server/lib/render/reports/overview-report";
+import { loadCountryFlags } from "@/server/lib/render/country-flags";
 import { uploadPng } from "@/server/lib/render/r2-upload";
 
 /**
@@ -133,7 +134,21 @@ async function buildReportHtml(
   }
   if (report === "overview") {
     const data = await buildOverviewReportData({ domain, country });
-    return renderOverviewReport({ report, domain, country, device, data });
+    // Only the distribution table draws flags, so only its codes get loaded —
+    // that's what keeps the flag set off the worker's startup graph.
+    const flags = await loadCountryFlags(
+      data.tables.countries.source === "ok"
+        ? data.tables.countries.value.map((row) => row.countryCode)
+        : [],
+    );
+    return renderOverviewReport({
+      report,
+      domain,
+      country,
+      device,
+      data,
+      flags,
+    });
   }
   return renderReportShell({ report, domain, country, device });
 }

@@ -5,16 +5,19 @@ import {
 } from "@/server/lib/dataforseo/backlinks";
 import {
   fetchDomainRankOverview,
+  fetchHistoricalRankOverview,
   fetchRankedKeywords,
   fetchSerpCompetitors,
   type DomainMetricsItem,
   type DomainRankOverviewMetrics,
   type DomainRankedKeywordItem,
+  type HistoricalRankOverviewItem,
   type SerpCompetitorItem,
 } from "@/server/lib/dataforseo/labs";
 import {
   computeAuthorityScore,
   resolveMarket,
+  type ResolvedMarket,
 } from "@/server/lib/render/reports/shared";
 
 /**
@@ -29,11 +32,11 @@ import {
  *     `rank_absolute` as the fallback when the API doesn't expose a `rank_group`
  *     (see E3.1 — `rank_group` was added to `rankedSerpItemSchema` for this).
  *
- * Historical traffic series (E3.4) lives behind a dedicated stub
- * {@link getHistoricalTrafficSeries} that returns `[]` today. The contract
- * is locked here so the template can render a placeholder honestly (never
- * invent data) and the E3.4 implementation can plug in later without
- * touching the template.
+ * The historical series (E3.4) comes from Labs `historical_rank_overview`
+ * (see {@link getHistoricalSeries}), which returns one metrics block per
+ * month back to 2020-10 — so the report never had to grow its own snapshot
+ * table. When that call fails the series degrades to `[]` and the template
+ * falls back to its honest "not enough history" placeholder.
  *
  * Like the other reports, this layer uses `Promise.allSettled` and the
  * `Source<T>` cell-level error signal so a single failed endpoint never
@@ -108,12 +111,35 @@ export type CountryRow = {
 /** One point on the "Tráfico orgánico" historical line chart. */
 export type TrendPoint = { date: string; value: number | null };
 
+/**
+ * Buckets that exist in the monthly history. `historical_rank_overview`
+ * reports position ranges only (`pos_1` … `pos_91_100`) with no SERP-feature
+ * counter, so `serpFeatures` stays a present-day-only bucket rather than
+ * being back-filled with an invented number.
+ */
+export type HistoricalKeywordBucket = Exclude<KeywordBucket, "serpFeatures">;
+
+/** One month of the ranked-keyword bucket history. */
+export type BucketTrendPoint = {
+  /** `YYYY-MM` — the chart's date formatter passes it through verbatim. */
+  date: string;
+  counts: Record<HistoricalKeywordBucket, number>;
+};
+
+export type HistoricalSeries = {
+  organicTraffic: TrendPoint[];
+  /** Empty when the domain has no paid presence in any month of the window —
+   *  an omitted series is honest, a flat zero line is not. */
+  paidTraffic: TrendPoint[];
+  keywordBuckets: BucketTrendPoint[];
+};
+
 /** Output shape consumed by the Overview template. */
 export type OverviewReportData = {
   input: { domain: string; country: string; countryLabel: string };
   /** True iff every cell came back ok. False means at least one is a placeholder. */
   healthy: boolean;
-  /** 5 tiles in the spec order — see A.1. */
+  /** 8 tiles, 2 rows × 4 columns — see `.dev/specs/semrush-2026-exact-clone-spec.md` §6. */
   tiles: {
     authority: Source<number | null>;
     authorityComposition: { rank: number | null; spamPenalty: number };
@@ -123,6 +149,7 @@ export type OverviewReportData = {
     referringDomains: Source<number | null>;
     trafficShare: Source<number | null>;
     organicKeywords: Source<number | null>;
+    paidKeywords: Source<number | null>;
     competitorsCount: Source<number | null>;
   };
   /** Distribución por países (sidebar). World + the requested country. */
@@ -130,10 +157,13 @@ export type OverviewReportData = {
     countries: Source<CountryRow[]>;
   };
   charts: {
-    /** Línea "Tráfico orgánico (histórico)" — placeholder when E3.4 is empty. */
-    trafficTrend: Source<{ points: TrendPoint[] }>;
-    /** Área apilada "Palabras clave orgánicas" por bucket. */
+    /** Histórico de tráfico. `points` es la serie orgánica; `paidPoints` está
+     *  vacío si el dominio no tuvo presencia de pago en la ventana. */
+    trafficTrend: Source<{ points: TrendPoint[]; paidPoints: TrendPoint[] }>;
+    /** Barra apilada "Palabras clave orgánicas" por bucket — snapshot de hoy. */
     keywordBuckets: Source<{ counts: Record<KeywordBucket, number> }>;
+    /** Los mismos buckets mes a mes (sin `serpFeatures`, que no existe en el histórico). */
+    keywordBucketTrend: Source<{ points: BucketTrendPoint[] }>;
   };
 };
 
@@ -145,27 +175,130 @@ const SERP_COMPETITORS_LIMIT = 10;
 
 /* ----------------------------- Charts ----------------------------- */
 
+/** How far back the Traffic / Keywords charts go — matches the "2Y" range
+ *  the template offers. The endpoint bills a flat rate per request, so a
+ *  wider window costs the same; 24 months is a readability choice. */
+const HISTORY_MONTHS = 24;
+
+/** `date_from` for a `HISTORY_MONTHS`-long window ending this month. */
+function historyWindowStart(now: Date): string {
+  const start = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (HISTORY_MONTHS - 1), 1),
+  );
+  return start.toISOString().slice(0, 10);
+}
+
+function monthKey(item: HistoricalRankOverviewItem): string | null {
+  if (typeof item.year !== "number" || typeof item.month !== "number")
+    return null;
+  return `${item.year}-${String(item.month).padStart(2, "0")}`;
+}
+
+/** A missing position counter means "no keywords there", not "unknown". */
+function atPos(value: number | null | undefined): number {
+  return value ?? 0;
+}
+
+/** The slice of a metrics block that {@link bucketCountsFromMetrics} reads. */
+type PositionCounters = Pick<
+  DomainRankOverviewMetrics,
+  | "pos_1"
+  | "pos_2_3"
+  | "pos_4_10"
+  | "pos_11_20"
+  | "pos_21_30"
+  | "pos_31_40"
+  | "pos_41_50"
+  | "pos_51_60"
+  | "pos_61_70"
+  | "pos_71_80"
+  | "pos_81_90"
+  | "pos_91_100"
+>;
+
+/** Fold the endpoint's 12 position counters into the report's 5 historical
+ *  buckets (see {@link HistoricalKeywordBucket}). */
+function bucketCountsFromMetrics(
+  metrics: PositionCounters | undefined,
+): Record<HistoricalKeywordBucket, number> {
+  return {
+    top3: atPos(metrics?.pos_1) + atPos(metrics?.pos_2_3),
+    rank4to10: atPos(metrics?.pos_4_10),
+    rank11to20: atPos(metrics?.pos_11_20),
+    rank21to50:
+      atPos(metrics?.pos_21_30) +
+      atPos(metrics?.pos_31_40) +
+      atPos(metrics?.pos_41_50),
+    rank51to100:
+      atPos(metrics?.pos_51_60) +
+      atPos(metrics?.pos_61_70) +
+      atPos(metrics?.pos_71_80) +
+      atPos(metrics?.pos_81_90) +
+      atPos(metrics?.pos_91_100),
+  };
+}
+
+/** Map the raw monthly items to the two series the charts consume, oldest
+ *  first. Months without a `year`/`month` can't be placed on an axis, so
+ *  they're dropped rather than guessed at. */
+function toHistoricalSeries(
+  items: HistoricalRankOverviewItem[],
+): HistoricalSeries {
+  const months = items
+    .flatMap((item) => {
+      const date = monthKey(item);
+      return date ? [{ date, item }] : [];
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const paidTraffic = months.map(({ date, item }) => ({
+    date,
+    value: numberOrNull(pickMetrics(item, "paid")?.etv),
+  }));
+
+  return {
+    organicTraffic: months.map(({ date, item }) => ({
+      date,
+      value: numberOrNull(pickMetrics(item, "organic")?.etv),
+    })),
+    paidTraffic: paidTraffic.some((point) => point.value != null)
+      ? paidTraffic
+      : [],
+    keywordBuckets: months.map(({ date, item }) => ({
+      date,
+      counts: bucketCountsFromMetrics(pickMetrics(item, "organic")),
+    })),
+  };
+}
+
 /**
- * Historical traffic series (E3.4 stub).
+ * Monthly history for the Traffic and Keywords charts, straight from Labs
+ * `historical_rank_overview` (one item per month, no local snapshot table).
  *
- * Today returns `[]` — the spec calls this out as a separate epic that needs
- * a database snapshot table + a capture policy decision (every render vs
- * cron). The template renders an honest placeholder when this is empty.
- *
- * The signature is locked to `TrendPoint[]` so the E3.4 implementation can
- * be dropped in without touching the template.
+ * Both the organic and the paid traffic series come from the same response,
+ * so the paid line costs nothing extra.
  */
-export async function getHistoricalTrafficSeries(
-  _domain: string,
-): Promise<TrendPoint[]> {
-  return [];
+export async function getHistoricalSeries(input: {
+  domain: string;
+  market: ResolvedMarket;
+  now?: Date;
+}): Promise<HistoricalSeries> {
+  const { data } = await fetchHistoricalRankOverview({
+    target: input.domain,
+    locationCode: input.market.locationCode,
+    languageCode: input.market.languageCode,
+    dateFrom: historyWindowStart(input.now ?? new Date()),
+  });
+  return toHistoricalSeries(data);
 }
 
 /* ----------------------------- Reducers ----------------------------- */
 
-/** Pull the metrics block for one search-engine from a Labs rank-overview row. */
+/** Pull the metrics block for one search-engine from a Labs rank-overview row.
+ *  Structurally typed because the present-day and historical endpoints carry
+ *  the same `metrics` shape on differently-named items. */
 function pickMetrics(
-  item: DomainMetricsItem | undefined,
+  item: DomainMetricsItem | null | undefined,
   se: "organic" | "paid",
 ): DomainRankOverviewMetrics | undefined {
   if (!item?.metrics) return undefined;
@@ -319,7 +452,7 @@ export async function buildOverviewReportData(
       itemTypes: ["organic"],
       limit: SERP_COMPETITORS_LIMIT,
     }),
-    getHistoricalTrafficSeries(input.domain),
+    getHistoricalSeries({ domain: input.domain, market }),
   ]);
 
   const labsWorld: DomainMetricsItem | undefined =
@@ -342,8 +475,10 @@ export async function buildOverviewReportData(
     serpCompetitorsSettled.status === "fulfilled"
       ? (serpCompetitorsSettled.value.data ?? [])
       : [];
-  const historical: TrendPoint[] =
-    historicalSettled.status === "fulfilled" ? historicalSettled.value : [];
+  const historical: HistoricalSeries =
+    historicalSettled.status === "fulfilled"
+      ? historicalSettled.value
+      : { organicTraffic: [], paidTraffic: [], keywordBuckets: [] };
 
   // ---- Tiles ----
   const authorityScore = computeAuthorityScore(backlinksSummary);
@@ -410,6 +545,14 @@ export async function buildOverviewReportData(
           : empty<number | null>(null)
         : err<number | null>(null);
     })(),
+    paidKeywords: (() => {
+      const v = countryTiles.paidKeywords;
+      return rankedSettled.status === "fulfilled"
+        ? v != null
+          ? ok(v)
+          : empty<number | null>(null)
+        : err<number | null>(null);
+    })(),
     competitorsCount: (() => {
       const v = serpCompetitors.length;
       return serpCompetitorsSettled.status === "fulfilled"
@@ -453,9 +596,21 @@ export async function buildOverviewReportData(
   // surface the bucket structure so the chart label "—" renders cleanly).
   void totalBuckets(counts);
 
+  const historyOk = historicalSettled.status === "fulfilled";
   const charts = {
-    trafficTrend: ok<{ points: TrendPoint[] }>({ points: historical }),
+    trafficTrend: historyOk
+      ? ok({
+          points: historical.organicTraffic,
+          paidPoints: historical.paidTraffic,
+        })
+      : err<{ points: TrendPoint[]; paidPoints: TrendPoint[] }>({
+          points: [],
+          paidPoints: [],
+        }),
     keywordBuckets: ok<{ counts: Record<KeywordBucket, number> }>({ counts }),
+    keywordBucketTrend: historyOk
+      ? ok({ points: historical.keywordBuckets })
+      : err<{ points: BucketTrendPoint[] }>({ points: [] }),
   };
 
   const healthy = [
@@ -494,6 +649,9 @@ export const __test = {
   rowFromLabs,
   countryLabelFor,
   bucketForKeyword,
+  bucketCountsFromMetrics,
+  toHistoricalSeries,
+  historyWindowStart,
   emptyBucketCounts,
   totalBuckets,
   ok,

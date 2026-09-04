@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- One module per DataForSEO section (backlinks.ts / serp.ts precedent): every Labs endpoint fetcher lives here so callers import from one path. */
 import { z } from "zod";
 import { dataforseoPost } from "@/server/lib/dataforseo/core";
 import {
@@ -70,10 +71,24 @@ export type DomainMetricsItem = {
 // paid) pulled out of `DomainMetricsItem.metrics`. Upstream's `LabsMetricsBlock`
 // only names `organic` explicitly; this is the shape `pickMetrics`/`buildRowFromLabs`
 // (overview-report.ts, competitors-report.ts) actually read off either block.
+// The `pos_*` fields only appear on `historical_rank_overview` responses (see
+// `HistoricalRankOverviewItem` below) — absent elsewhere, hence optional.
 export type DomainRankOverviewMetrics = {
   etv?: number | null;
   count?: number | null;
   estimated_paid_traffic_cost?: number | null;
+  pos_1?: number | null;
+  pos_2_3?: number | null;
+  pos_4_10?: number | null;
+  pos_11_20?: number | null;
+  pos_21_30?: number | null;
+  pos_31_40?: number | null;
+  pos_41_50?: number | null;
+  pos_51_60?: number | null;
+  pos_61_70?: number | null;
+  pos_71_80?: number | null;
+  pos_81_90?: number | null;
+  pos_91_100?: number | null;
   [key: string]: unknown;
 };
 
@@ -93,6 +108,15 @@ export type SerpCompetitorItem = {
   etv?: number | null;
   keywords_count?: number | null;
   [key: string]: unknown;
+};
+
+// Fork addition (E3 Domain Overview): `historical_rank_overview` returns the
+// exact same metrics-block shape as `domain_rank_overview`
+// (`DomainMetricsItem`), just one item per calendar month instead of a single
+// present-day snapshot — hence the intersection instead of a new shape.
+export type HistoricalRankOverviewItem = DomainMetricsItem & {
+  year?: number | null;
+  month?: number | null;
 };
 
 // Ranked keywords is the one Labs endpoint the SDK types loosely: its
@@ -271,6 +295,52 @@ export async function fetchDomainRankOverview(input: {
       },
     ],
   );
+  const task = assertOk(response);
+  return {
+    data: task.result?.[0]?.items ?? [],
+    billing: buildTaskBilling(task),
+  };
+}
+
+/**
+ * Labs `historical_rank_overview` — the same metrics block as
+ * {@link fetchDomainRankOverview}, but one item PER MONTH (`year` + `month`)
+ * going back to 2020-10 rather than a single present-day snapshot. This is
+ * what lets the Domain Overview report draw a real traffic / ranked-keyword
+ * history without us maintaining our own snapshot table.
+ *
+ * Cost is flat per request — $0.106 in DataForSEO's own doc example, which
+ * covers a multi-month range; the date window does not change the price. The
+ * exact charge is read off the task envelope by `buildTaskBilling`, so
+ * metering stays correct even if the rate card moves.
+ *
+ * `include_clickstream_data` stays false: it DOUBLES the request cost and the
+ * report reads `etv`, not `clickstream_etv`.
+ */
+export async function fetchHistoricalRankOverview(input: {
+  target: string;
+  locationCode: number;
+  languageCode: string;
+  /** `yyyy-mm-dd`; omitted defaults to the previous 6 months. Floor: 2020-10-01. */
+  dateFrom?: string;
+  /** `yyyy-mm-dd`; omitted defaults to today. */
+  dateTo?: string;
+}): Promise<DataforseoApiResponse<HistoricalRankOverviewItem[]>> {
+  const response = await dataforseoPost<
+    DataforseoItemsTask<HistoricalRankOverviewItem>
+  >("/v3/dataforseo_labs/google/historical_rank_overview/live", [
+    {
+      target: input.target,
+      location_code: input.locationCode,
+      language_code: input.languageCode,
+      date_from: input.dateFrom,
+      date_to: input.dateTo,
+      // DataForSEO recommends always correlating so month-to-month values
+      // stay comparable across their own database revisions.
+      correlate: true,
+      include_clickstream_data: false,
+    },
+  ]);
   const task = assertOk(response);
   return {
     data: task.result?.[0]?.items ?? [],

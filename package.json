@@ -51,6 +51,7 @@
     "billing:usage": "tsx scripts/dataforseo-account-usage.ts",
     "cleanup:default-projects:d1": "tsx scripts/d1-default-project-cleanup.ts",
     "gdpr:erase-user": "tsx scripts/erase-user-data.ts",
+    "preview:overview": "tsx scripts/preview-overview-report.ts",
     "seed:rank-tracking": "tsx scripts/seed-rank-tracking.ts",
     "seed:projects": "tsx scripts/seed-projects.ts",
     "ci:check": "prettier --check . && knip && tsc --noEmit && tsc --noEmit -p badseo/tsconfig.json && tsc --noEmit -p renderer/tsconfig.json && oxlint . --type-aware && pnpm sync-plugin-skills && test -z \"$(git status --porcelain -- plugins/openseo/skills)\""
@@ -97,6 +98,7 @@
     "autumn-js": "^1.2.33",
     "better-auth": "^1.6.22",
     "cloudflare": "^5.2.0",
+    "country-flag-icons": "^1.6.20",
     "daisyui": "^5.5.5",
     "drizzle-orm": "^0.45.2",
     "fast-xml-parser": "^5.4.1",

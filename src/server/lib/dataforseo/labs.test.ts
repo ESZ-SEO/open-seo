@@ -10,7 +10,10 @@ vi.mock("@/server/lib/dataforseoBillingClassification", () => ({
   createDataforseoBillingClassifier: () => () => null,
 }));
 
-import { fetchDomainIntersection } from "@/server/lib/dataforseo/labs";
+import {
+  fetchDomainIntersection,
+  fetchHistoricalRankOverview,
+} from "@/server/lib/dataforseo/labs";
 
 // A successful DataForSEO task always carries billing metadata (path + cost).
 const billed = {
@@ -61,6 +64,65 @@ function makeIntersectionItem(keyword: string, searchVolume: number) {
     },
   };
 }
+
+describe("fetchHistoricalRankOverview", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("posts the date window and never opts into double-priced clickstream data", async () => {
+    vi.mocked(fetch).mockResolvedValue(makeOkResponse([]));
+
+    await fetchHistoricalRankOverview({
+      target: "example.com",
+      locationCode: 2724,
+      languageCode: "es",
+      dateFrom: "2023-04-01",
+    });
+
+    const body = vi.mocked(fetch).mock.calls[0]?.[1]?.body;
+    const posted: unknown = typeof body === "string" ? JSON.parse(body) : null;
+    // Full equality, not a partial match: the point of the assertion is that
+    // nothing else rides along — `include_clickstream_data` would double the bill.
+    expect(posted).toEqual([
+      {
+        target: "example.com",
+        location_code: 2724,
+        language_code: "es",
+        date_from: "2023-04-01",
+        correlate: true,
+        include_clickstream_data: false,
+      },
+    ]);
+  });
+
+  it("returns the monthly items with their metrics block intact", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      makeOkResponse([
+        {
+          se_type: "google",
+          year: 2025,
+          month: 1,
+          metrics: { organic: { etv: 180, pos_1: 3 } },
+        },
+      ]),
+    );
+
+    const result = await fetchHistoricalRankOverview({
+      target: "example.com",
+      locationCode: 2724,
+      languageCode: "es",
+    });
+
+    expect(result.data[0]?.year).toBe(2025);
+    expect(result.data[0]?.metrics?.organic?.etv).toBe(180);
+  });
+});
 
 describe("fetchDomainIntersection", () => {
   beforeEach(() => {

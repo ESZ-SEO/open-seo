@@ -98,17 +98,48 @@ function svg(
 }
 
 /** Empty placeholder that keeps the layout stable. */
-export function placeholderSvg(message: string): string {
+export function placeholderSvg(
+  message: string,
+  opts: { width?: number; height?: number } = {},
+): string {
+  const width = opts.width ?? 320;
+  const height = opts.height ?? 200;
   return svg(
-    320,
-    200,
-    `<rect width="320" height="200" fill="${PALETTE.surface}" /><text x="160" y="100" text-anchor="middle" font-size="14" fill="${PALETTE.muted}">${escapeXml(message)}</text>`,
+    width,
+    height,
+    `<rect width="${width}" height="${height}" fill="${PALETTE.surface}" /><text x="${width / 2}" y="${height / 2}" text-anchor="middle" font-size="14" fill="${PALETTE.muted}">${escapeXml(message)}</text>`,
   );
 }
 
 /** Approximate text width in px for the given font size — used for axis labels. */
 function approxTextWidth(text: string, fontSize: number): number {
   return text.length * fontSize * 0.55;
+}
+
+const SERIES_PALETTE = [
+  PALETTE.series1,
+  PALETTE.series2,
+  PALETTE.series3,
+  PALETTE.series4,
+  PALETTE.brandDark,
+  PALETTE.accent,
+];
+
+function seriesColor(index: number): string {
+  return SERIES_PALETTE[index % SERIES_PALETTE.length] ?? PALETTE.brand;
+}
+
+/** One horizontal row of swatch + label, laid out left to right from the SVG
+ *  origin. Shared by every chart that names its series inside the canvas. */
+function renderLegendRow(entries: { label: string; color: string }[]): string {
+  let x = 0;
+  return entries
+    .map((entry) => {
+      const row = `<rect x="${x.toFixed(1)}" y="4" width="9" height="9" rx="2" fill="${entry.color}"/><text x="${(x + 14).toFixed(1)}" y="13" font-size="11" fill="${PALETTE.muted}">${escapeXml(entry.label)}</text>`;
+      x += approxTextWidth(entry.label, 11) + 30;
+      return row;
+    })
+    .join("");
 }
 
 /* ------------------------------ PieChart ------------------------------ */
@@ -503,25 +534,26 @@ export function renderBarPairChart(
   return svg(width, height, `${grid}${bars.join("")}${legendMarkup}${xTicks}`);
 }
 
-/* ----------------------------- StackedBarChart --------------------------- */
+/* ------------------------------ StackedBar ------------------------------ */
 
 /**
- * One stacked bar = one column. Each column has a list of segments with a
- * label and a value; the y-axis is the cumulative sum. The chart is used by
- * the Domain Overview (E3) report — see `KEYWORD_BUCKETS` in
- * `overview-report.ts` — to map the "Palabras clave orgánicas" bucket
- * distribution (Top 3 / 4–10 / 11–20 / 21–50 / 51–100 / SERP features) in a
- * single snapshot. We pick a stacked bar instead of a stacked area because
- * the data is a single point in time; the area apilada verdana in
- * Semrush's layout reads better as a column when there's only one column.
+ * A single full-width horizontal stacked bar with the legend above it. Used
+ * by the Domain Overview (E3) report for the ranked-keyword bucket
+ * distribution (`KEYWORD_BUCKETS` in `overview-report.ts`: Top 3 / 4–10 /
+ * 11–20 / 21–50 / 51–100 / SERP features).
+ *
+ * The data is a proportion at one moment in time, not a series, so the bar
+ * carries no axes and no grid: a lone vertical column with a y-axis inside a
+ * wide card reads as a broken time series (design review finding F), whereas
+ * a full-width bar reads as what it is — a share of the sampled keywords.
  *
  * Visual contract:
- *  - Width/height defaults fit the 480×200 chart card used by the template.
- *  - Falls back to `placeholderSvg("Sin datos")` when the columns list is
- *    empty or every segment is zero (no info to draw).
- *  - Optional per-segment colour override; otherwise pulls from a small
- *    brand palette keyed by series index.
- *  - A legend at the top left reads `label` + value, one row per segment.
+ *  - Bar spans the full `width` at `STACKED_BAR_HEIGHT`; the SVG's own height
+ *    is derived, so the caller only picks the width.
+ *  - Falls back to `placeholderSvg("Sin datos")` when every segment is zero.
+ *  - Optional per-segment colour override; otherwise a small brand palette
+ *    keyed by series index.
+ *  - Legend above the bar, one entry per segment: `label` + value.
  */
 export type StackedBarSegment = {
   label: string;
@@ -529,88 +561,325 @@ export type StackedBarSegment = {
   color?: string;
 };
 
-export type StackedBarColumn = {
-  /** Stable label for the column (e.g. "Hoy"). */
+const STACKED_BAR_HEIGHT = 24;
+const STACKED_BAR_TOP = 30;
+const STACKED_BAR_CLIP_ID = "stacked-bar-clip";
+
+export function renderStackedBar(
+  segments: StackedBarSegment[],
+  opts: { width?: number } = {},
+): string {
+  const width = opts.width ?? 480;
+  const total = segments.reduce((acc, seg) => acc + Math.max(0, seg.value), 0);
+  if (total === 0) {
+    return placeholderSvg("Sin datos", {
+      width,
+      height: STACKED_BAR_TOP + STACKED_BAR_HEIGHT,
+    });
+  }
+
+  const colorAt = (seg: StackedBarSegment, i: number) =>
+    seg.color ?? seriesColor(i);
+
+  const legend = renderLegendRow(
+    segments.map((seg, i) => ({
+      label: `${seg.label} ${Math.round(seg.value)}`,
+      color: colorAt(seg, i),
+    })),
+  );
+
+  // A 1px white sliver between segments keeps adjacent colours readable; the
+  // clip path rounds only the two outer ends, so the bar reads as one bar.
+  let x = 0;
+  const bars = segments
+    .map((seg, i) => {
+      const segWidth = (Math.max(0, seg.value) / total) * width;
+      const rect = `<rect x="${x.toFixed(1)}" y="${STACKED_BAR_TOP}" width="${Math.max(0, segWidth - 1).toFixed(1)}" height="${STACKED_BAR_HEIGHT}" fill="${colorAt(seg, i)}"/>`;
+      x += segWidth;
+      return rect;
+    })
+    .join("");
+
+  return svg(
+    width,
+    STACKED_BAR_TOP + STACKED_BAR_HEIGHT,
+    `<defs><clipPath id="${STACKED_BAR_CLIP_ID}"><rect x="0" y="${STACKED_BAR_TOP}" width="${width}" height="${STACKED_BAR_HEIGHT}" rx="4"/></clipPath></defs>` +
+      `${legend}<g clip-path="url(#${STACKED_BAR_CLIP_ID})">${bars}</g>`,
+  );
+}
+
+/* --------------------------- Time series charts --------------------------- */
+
+/**
+ * `renderStackedAreaChart` and `renderMultiLineChart` are the two charts the
+ * Semrush 2026 Domain Overview draws over a date range (reference capture:
+ * `.dev/designer/Captura de pantalla 2026-09-04 082346.png`) — "Keywords" as
+ * stacked bands per rank bucket, "Traffic" as one thin line per traffic type.
+ * They share a frame that differs from `chartAxes`' on three counts, all
+ * measured off that capture: the value axis sits on the **right** of the plot
+ * area, the grid is a hairline rather than a dashed rule, and the curves are
+ * smoothed instead of a polyline.
+ *
+ * They are deliberately kept apart from `renderLineChart`/`renderAreaChart`,
+ * which the backlinks report uses with a left-hand axis and point markers:
+ * restyling those in place would silently redraw a report this work has no
+ * reference for.
+ *
+ * Both are wired into `templates/overview.ts`, fed by the monthly series
+ * `getHistoricalSeries` reads from Labs `historical_rank_overview`. Neither
+ * renders unless that series has real samples: the template gates them and
+ * falls back to its own copy, so a short history degrades honestly instead of
+ * drawing a line through nothing.
+ */
+export type TimeSeries = {
   label: string;
-  segments: StackedBarSegment[];
+  points: AreaPoint[];
+  color?: string;
 };
 
-export function renderStackedBarChart(
-  columns: StackedBarColumn[],
+const TIME_AXIS_PADDING = {
+  left: 4,
+  right: 52,
+  /** Room for the legend row above the plot. */
+  top: 30,
+  bottom: 26,
+} as const;
+
+function timeAxes(width: number, height: number): ChartAxes {
+  return {
+    width,
+    height,
+    paddingLeft: TIME_AXIS_PADDING.left,
+    paddingRight: TIME_AXIS_PADDING.right,
+    paddingTop: TIME_AXIS_PADDING.top,
+    paddingBottom: TIME_AXIS_PADDING.bottom,
+    innerW: width - TIME_AXIS_PADDING.left - TIME_AXIS_PADDING.right,
+    innerH: height - TIME_AXIS_PADDING.top - TIME_AXIS_PADDING.bottom,
+  };
+}
+
+const Y_TICK_COUNT = 4;
+
+/** Axis top rounded up so the labels land on round numbers — the reference's
+ *  axis reads 0 / 500K / 1M / 1.5M / 2M, not 0 / 431.2K / 862.4K. Picks a nice
+ *  step first and multiplies back up, because a nice *maximum* alone still
+ *  divides into ugly intermediate ticks. */
+function niceAxisTop(max: number): number {
+  if (max <= 0) return 1;
+  const rawStep = max / Y_TICK_COUNT;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const normalized = rawStep / magnitude;
+  const step =
+    ([1, 1.5, 2, 2.5, 5, 7.5, 10].find((s) => normalized <= s) ?? 10) *
+    magnitude;
+  return step * Y_TICK_COUNT;
+}
+
+/** Grid + value labels down the right edge, the way the reference draws them. */
+function renderRightYAxis(axes: ChartAxes, range: [number, number]): string {
+  const rows: string[] = [];
+  for (let i = 0; i <= Y_TICK_COUNT; i++) {
+    const v = range[0] + ((range[1] - range[0]) * i) / Y_TICK_COUNT;
+    const y = axes.paddingTop + axes.innerH - (axes.innerH * i) / Y_TICK_COUNT;
+    // `formatYValue` keeps one decimal always — "0.0K" for the baseline and
+    // "2.0M" where the reference reads "2M". Round ticks earned their round
+    // labels.
+    const label = v === 0 ? "0" : formatYValue(v, range).replace(".0", "");
+    rows.push(
+      `<line x1="${axes.paddingLeft}" y1="${y.toFixed(1)}" x2="${axes.width - axes.paddingRight}" y2="${y.toFixed(1)}" stroke="${PALETTE.border}" stroke-width="1"/>`,
+      `<text x="${axes.width - axes.paddingRight + 8}" y="${(y + 3).toFixed(1)}" font-size="10" fill="${PALETTE.muted}">${label}</text>`,
+    );
+  }
+  return rows.join("");
+}
+
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/** "2025-03-01" → "Mar 2025". A multi-year range needs the year, which is why
+ *  these charts don't reuse `formatShortDate`'s bare "MM-DD". */
+function formatMonthLabel(iso: string): string {
+  const year = Number(iso.slice(0, 4));
+  const month = Number(iso.slice(5, 7));
+  const name = MONTH_NAMES[month - 1];
+  return name === undefined || Number.isNaN(year) ? iso : `${name} ${year}`;
+}
+
+function renderTimeXTicks(axes: ChartAxes, points: AreaPoint[]): string {
+  const dx = axes.innerW / Math.max(1, points.length - 1);
+  const step = Math.max(1, Math.floor(points.length / 6));
+  return pickXTicks(points, step)
+    .map((idx) => {
+      const x = axes.paddingLeft + idx * dx;
+      // The plot starts flush against the left edge, so a centred first label
+      // would be sliced in half by the viewBox (and the last by the right
+      // edge). Anchor the two end labels inwards.
+      const anchor =
+        idx === 0 ? "start" : idx === points.length - 1 ? "end" : "middle";
+      return `<text x="${x.toFixed(1)}" y="${(axes.paddingTop + axes.innerH + 17).toFixed(1)}" text-anchor="${anchor}" font-size="10" fill="${PALETTE.muted}">${escapeXml(formatMonthLabel(points[idx].date))}</text>`;
+    })
+    .join("");
+}
+
+type Pt = { x: number; y: number };
+
+/** Catmull-Rom through every point, emitted as cubic Béziers. A polyline over
+ *  monthly samples reads as a sawtooth; the reference's series are curves. */
+function smoothPath(points: Pt[]): string {
+  const first = points[0];
+  if (first === undefined) return "";
+  if (points.length < 3) {
+    return points
+      .map(
+        (p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`,
+      )
+      .join(" ");
+  }
+  let d = `M ${first.x.toFixed(1)} ${first.y.toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p0 = points[i - 1] ?? p1;
+    const p3 = points[i + 2] ?? p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+/** The x axis and the shared date column both come from the first series, so
+ *  every series has to be sampled on the same dates. */
+function timeSeriesFrame(
+  series: TimeSeries[],
+  width: number,
+  height: number,
+): { axes: ChartAxes; dates: AreaPoint[]; xAt: (i: number) => number } | null {
+  const dates = series[0]?.points ?? [];
+  if (series.length === 0 || dates.length === 0) return null;
+  const axes = timeAxes(width, height);
+  const dx = axes.innerW / Math.max(1, dates.length - 1);
+  return { axes, dates, xAt: (i) => axes.paddingLeft + i * dx };
+}
+
+function valueAt(series: TimeSeries, index: number): number {
+  return Math.max(0, series.points[index]?.value ?? 0);
+}
+
+export function renderStackedAreaChart(
+  series: TimeSeries[],
   opts: { width?: number; height?: number } = {},
 ): string {
-  if (columns.length === 0) return placeholderSvg("Sin datos");
-  const total = columns.reduce(
-    (acc, c) =>
-      acc + c.segments.reduce((s, seg) => s + Math.max(0, seg.value), 0),
-    0,
-  );
-  if (total === 0) return placeholderSvg("Sin datos");
-
   const width = opts.width ?? 480;
-  const height = opts.height ?? 200;
-  const axes = chartAxes(width, height);
-  const domain: [number, number] = [0, total * 1.1];
+  const height = opts.height ?? 240;
+  const frame = timeSeriesFrame(series, width, height);
+  if (frame === null) return placeholderSvg("Sin histórico", { width, height });
+  const { axes, dates, xAt } = frame;
 
-  const grid = renderYAxisTicks(axes, domain, 4);
-  const palette = [
-    PALETTE.series1,
-    PALETTE.series2,
-    PALETTE.series3,
-    PALETTE.series4,
-    PALETTE.brandDark,
-    PALETTE.accent,
-  ];
+  const totals = dates.map((_, i) =>
+    series.reduce((acc, s) => acc + valueAt(s, i), 0),
+  );
+  const domain: [number, number] = [0, niceAxisTop(Math.max(...totals, 1))];
+  const yAt = (value: number) =>
+    axes.paddingTop + axes.innerH - axes.innerH * (value / domain[1]);
 
-  const bars: string[] = [];
-  columns.forEach((column, ci) => {
-    const groupWidth = axes.innerW / columns.length;
-    const barWidth = Math.max(8, groupWidth * 0.6);
-    const groupX =
-      axes.paddingLeft + ci * groupWidth + (groupWidth - barWidth) / 2;
-    let runningTotal = 0;
-    column.segments.forEach((seg, si) => {
-      const value = Math.max(0, seg.value);
-      const t = runningTotal / (domain[1] - domain[0] || 1);
-      const tHeight = (value / (domain[1] - domain[0] || 1)) * axes.innerH;
-      const segY = axes.paddingTop + axes.innerH - axes.innerH * t - tHeight;
-      const color = seg.color ?? palette[si % palette.length] ?? PALETTE.brand;
-      bars.push(
-        `<rect x="${groupX.toFixed(1)}" y="${segY.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${tHeight.toFixed(1)}" fill="${color}" stroke="${PALETTE.cardBg}" stroke-width="1"/>`,
+  // Bands are drawn bottom-up: each one's floor is the previous one's ceiling,
+  // so `cumulative` carries the running stack as we go.
+  const cumulative = dates.map(() => 0);
+  const bands = series
+    .map((s, si) => {
+      const floor = dates.map((_, i) => ({ x: xAt(i), y: yAt(cumulative[i]) }));
+      dates.forEach((_, i) => {
+        cumulative[i] += valueAt(s, i);
+      });
+      const ceiling = dates.map((_, i) => ({
+        x: xAt(i),
+        y: yAt(cumulative[i]),
+      }));
+      const color = s.color ?? seriesColor(si);
+      // The floor is traced back to the left, so its own "M" becomes a "L"
+      // that closes the band onto the ceiling.
+      const back = smoothPath(floor.reverse()).replace("M", "L");
+      return (
+        `<path d="${smoothPath(ceiling)} ${back} Z" fill="${color}" fill-opacity="0.55" stroke="none"/>` +
+        `<path d="${smoothPath(ceiling)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>`
       );
-      runningTotal += value;
-    });
-  });
-
-  // Legend at the top — one row per segment, sorted by the order they appear
-  // in the first column (caller decides the ordering).
-  const firstColumn = columns[0];
-  const legendY = 6;
-  let legendCursorX = axes.paddingLeft;
-  const legendMarkup = (firstColumn?.segments ?? [])
-    .map((seg, si) => {
-      const color = seg.color ?? palette[si % palette.length] ?? PALETTE.brand;
-      const label = `${seg.label} ${Math.round(seg.value)}`;
-      const lw = approxTextWidth(label, 10) + 16;
-      const row = `
-        <rect x="${legendCursorX}" y="${legendY}" width="9" height="9" rx="2" fill="${color}" />
-        <text x="${legendCursorX + 14}" y="${legendY + 8}" font-size="10" fill="${PALETTE.muted}">${escapeXml(label)}</text>`;
-      legendCursorX += lw;
-      return row;
-    })
-    .join("");
-  void legendCursorX;
-
-  // X axis labels — one per column.
-  const xTicks = columns
-    .map((column, ci) => {
-      const groupWidth = axes.innerW / columns.length;
-      const x = axes.paddingLeft + ci * groupWidth + groupWidth / 2;
-      return `<text x="${x.toFixed(1)}" y="${(axes.paddingTop + axes.innerH + 16).toFixed(1)}" text-anchor="middle" font-size="10" fill="${PALETTE.muted}">${escapeXml(column.label)}</text>`;
     })
     .join("");
 
-  return svg(width, height, `${grid}${bars.join("")}${legendMarkup}${xTicks}`);
+  const legend = renderLegendRow(
+    series.map((s, si) => ({
+      label: s.label,
+      color: s.color ?? seriesColor(si),
+    })),
+  );
+
+  return svg(
+    width,
+    height,
+    `${renderRightYAxis(axes, domain)}${bands}${legend}${renderTimeXTicks(axes, dates)}`,
+  );
+}
+
+export function renderMultiLineChart(
+  series: TimeSeries[],
+  opts: { width?: number; height?: number } = {},
+): string {
+  const width = opts.width ?? 480;
+  const height = opts.height ?? 240;
+  const frame = timeSeriesFrame(series, width, height);
+  if (frame === null) return placeholderSvg("Sin histórico", { width, height });
+  const { axes, dates, xAt } = frame;
+
+  const peak = Math.max(
+    ...series.flatMap((s) => dates.map((_, i) => valueAt(s, i))),
+    1,
+  );
+  const domain: [number, number] = [0, niceAxisTop(peak)];
+
+  const lines = series
+    .map((s, si) => {
+      const path = smoothPath(
+        dates.map((_, i) => ({
+          x: xAt(i),
+          y:
+            axes.paddingTop +
+            axes.innerH -
+            axes.innerH * (valueAt(s, i) / domain[1]),
+        })),
+      );
+      // No point markers: the reference draws bare lines, and dots on a dense
+      // series turn the line into a dotted band.
+      return `<path d="${path}" fill="none" stroke="${s.color ?? seriesColor(si)}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>`;
+    })
+    .join("");
+
+  const legend = renderLegendRow(
+    series.map((s, si) => ({
+      label: s.label,
+      color: s.color ?? seriesColor(si),
+    })),
+  );
+
+  return svg(
+    width,
+    height,
+    `${renderRightYAxis(axes, domain)}${lines}${legend}${renderTimeXTicks(axes, dates)}`,
+  );
 }
 
 /* ----------------------------- NetworkGraph --------------------------- */
