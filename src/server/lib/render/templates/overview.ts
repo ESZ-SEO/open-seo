@@ -356,6 +356,20 @@ function renderAiSearchCard(): string {
 
 /* ----------------------------- Distribution rail ----------------------------- */
 
+/** Brand palette for the bucket segments — fixed order so the chart legend
+ *  matches the spec example (Top 3 = brand, 4–10 = accent, then warn / brand
+ *  dark / orange / teal for the smaller buckets). Declared up here because the
+ *  rail's SERP donut reuses two of these colours (RAIL-03) and a `const` read
+ *  before its declaration is a load-time crash, not a lint nit. */
+const BUCKET_COLORS: Record<KeywordBucket, string> = {
+  top3: "#1f6feb",
+  rank4to10: "#14b8a6",
+  rank11to20: "#0b3d91",
+  rank21to50: "#94a3b8",
+  rank51to100: "#fb923c",
+  serpFeatures: "#22c55e",
+};
+
 /** Google mode: the share / traffic / keywords the report actually measures. */
 function googleCountryRows(
   rows: CountryRow[],
@@ -395,12 +409,81 @@ function aiCountryRows(
     .join("");
 }
 
+/**
+ * Top Cited Sources — the domains an AI answer cites when it mentions this one.
+ *
+ * Same situation as the AI Search card: no endpoint reports it, so the module
+ * carries its columns and its height and nothing else. The body is sized for
+ * the three rows the audit budgets, so filling it later moves nothing.
+ */
+function renderTopCitedSources(countryFlag: string): string {
+  return `
+        <div class="rail-block">
+          <h3 class="rail-title">Top Cited Sources ${countryFlag}</h3>
+          <div class="cited">
+            <div class="cited-head">
+              <span>Domain</span>
+              <span class="num">Mentions</span>
+            </div>
+            <div class="cited-empty muted">No cited-source data</div>
+          </div>
+        </div>`;
+}
+
+/**
+ * Google SERP Positions Distribution — how the domain's SERP appearances split
+ * between plain organic results, AI Overview citations and other features.
+ *
+ * Rendered as an empty ring, and that is a deliberate refusal rather than a
+ * gap. The report's `ranked_keywords` call asks for `item_types: ["organic"]`,
+ * so a split computed from that sample is 100% Organic / 0% / 0% *by
+ * construction* — a restatement of our own request filter wearing the costume
+ * of a finding. A reader would take it as "this domain is never cited in AI
+ * Overviews", which the data cannot support. See the handover note for the two
+ * ways to get the real split, both of which cost something a template isn't
+ * allowed to spend on its own.
+ *
+ * The ring is drawn here rather than through `renderDonutChart` because that
+ * one is a 320px chart with its own legend and a centre "Total" — this is a
+ * ~100px rail ornament whose legend has to align with the rail's other rows.
+ */
+const SERP_SEGMENTS = [
+  // Organic and Other SERP Features reuse the Keywords chart's series colours
+  // (RAIL-03). AI Overviews has no counterpart there — we don't plot it — so
+  // it takes the reference's magenta.
+  { label: "Organic", color: BUCKET_COLORS.top3 },
+  { label: "AI Overviews", color: "#d946ef" },
+  { label: "Other SERP Features", color: BUCKET_COLORS.serpFeatures },
+] as const;
+
+function renderSerpDistribution(): string {
+  const legend = SERP_SEGMENTS.map(
+    (s) => `
+            <div class="serp-row">
+              <span class="serp-key"><span class="serp-dot" style="background:${s.color}"></span>${escapeHtml(s.label)}</span>
+              <span class="num muted">${NO_SOURCE}</span>
+            </div>`,
+  ).join("");
+
+  return `
+        <div class="rail-block">
+          <h3 class="rail-title">Google SERP Positions Distribution</h3>
+          <div class="serp">
+            <svg class="serp-donut" viewBox="0 0 100 100" width="86" height="86" role="img" aria-label="No data">
+              <circle cx="50" cy="50" r="39" fill="none" stroke="#e9ebee" stroke-width="13"></circle>
+            </svg>
+            <div class="serp-legend">${legend}</div>
+          </div>
+        </div>`;
+}
+
 function renderRail(
   mode: SearchMode,
   rows: CountryRow[],
   flags: Record<string, string>,
+  countryFlag: string,
 ): string {
-  const table =
+  const distribution =
     mode === "ai"
       ? `<table class="data">
             <thead><tr>
@@ -409,8 +492,7 @@ function renderRail(
               <th class="num">Mentions</th>
             </tr></thead>
             <tbody>${aiCountryRows(rows, flags)}</tbody>
-          </table>
-          <div class="rail-foot">No AI Search data source connected</div>`
+          </table>`
       : `<table class="data">
             <thead><tr>
               <th>Country</th>
@@ -424,25 +506,14 @@ function renderRail(
 
   return `
       <aside class="rail">
-        <h3 class="rail-title">Distribution by Country</h3>
-        ${table}
+        <div class="rail-block">
+          <h3 class="rail-title">Distribution by Country</h3>
+          ${distribution}
+        </div>
+        ${mode === "ai" ? renderTopCitedSources(countryFlag) : ""}
+        ${renderSerpDistribution()}
       </aside>`;
 }
-
-/* ----------------------------- Buckets ----------------------------- */
-
-/** Brand palette for the bucket segments — fixed order so the chart legend
- *  matches the spec example (Top 3 = brand, 4–10 = accent, then warn / brand
- *  dark / orange / teal for the smaller buckets).
- */
-const BUCKET_COLORS: Record<KeywordBucket, string> = {
-  top3: "#1f6feb",
-  rank4to10: "#14b8a6",
-  rank11to20: "#0b3d91",
-  rank21to50: "#94a3b8",
-  rank51to100: "#fb923c",
-  serpFeatures: "#22c55e",
-};
 
 /**
  * Nominal chart canvas — the width of the workspace's main column at the
@@ -957,8 +1028,32 @@ export function renderOverviewReport({
 
   .ws-body { display: grid; grid-template-columns: minmax(240px, 22%) minmax(0, 78%); min-height: 418px; }
   .rail { padding-right: 16px; border-right: 1px solid var(--border); min-width: 0; }
-  .rail-title { margin: 0 0 8px; font-size: 14.5px; font-weight: 700; }
+  .rail-block + .rail-block { margin-top: 12px; }
+  .rail-title {
+    margin: 0 0 8px; font-size: 14.5px; font-weight: 700;
+    display: flex; align-items: center; gap: 6px;
+  }
   .rail-foot { font-size: 10.5px; color: var(--muted); margin-top: 8px; }
+
+  /* Top Cited Sources — the body is sized for the three rows the audit
+     budgets, so the module keeps its height whether or not it ever fills. */
+  .cited-head, .cited-row {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 12.5px; padding: 6px 0; border-bottom: 1px solid var(--line);
+  }
+  .cited-head { font-size: 11px; color: var(--muted); font-weight: 500; padding-bottom: 5px; }
+  .cited-empty {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 78px; font-size: 11px; text-align: center;
+  }
+
+  /* SERP donut + legend, side by side inside the rail's width. */
+  .serp { display: flex; align-items: center; gap: 12px; }
+  .serp-donut { flex-shrink: 0; }
+  .serp-legend { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .serp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; }
+  .serp-key { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .serp-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .ws-main { padding-left: 16px; display: flex; flex-direction: column; min-width: 0; }
   .chart-block + .chart-block {
     margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
@@ -1108,7 +1203,7 @@ export function renderOverviewReport({
         </div>
       </div>
       <div class="ws-body">
-        ${renderRail(searchMode, countries, flags)}
+        ${renderRail(searchMode, countries, flags, countryFlag)}
         <div class="ws-main">
           <div class="chart-block">
             <h3>Traffic</h3>

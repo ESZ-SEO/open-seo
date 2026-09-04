@@ -286,6 +286,32 @@ describe("renderOverviewReport · template", () => {
     expect(html).toContain("SERP features");
   });
 
+  it("adds Top Cited Sources in AI mode only, with no invented domains", () => {
+    // Asserted on the markup, not the phrase: the phrase also names a rule in
+    // the inline <style>, which ships in the same string.
+    expect(render()).not.toContain('<div class="cited">');
+    const ai = render({ searchMode: "ai" });
+    expect(ai).toContain('<div class="cited">');
+    expect(ai).toContain('<h3 class="rail-title">Top Cited Sources');
+    expect(ai).toContain('class="cited-empty muted"');
+  });
+
+  it("draws the SERP distribution ring empty rather than restating our filter", () => {
+    // The ranked_keywords call asks for organic items only, so a computed
+    // split would read 100% Organic no matter the domain. The legend keeps its
+    // three rows; not one of them may carry a percentage.
+    const html = render();
+    expect(html).toContain("Google SERP Positions Distribution");
+    expect(html).toContain(">Organic<");
+    expect(html).toContain(">AI Overviews<");
+    expect(html).toContain(">Other SERP Features<");
+    const legend = html.slice(
+      html.indexOf('class="serp-legend"'),
+      html.indexOf("</aside>"),
+    );
+    expect(legend).not.toMatch(/\d+(\.\d+)?%/);
+  });
+
   it("renders the historical traffic chart when the series has enough months", () => {
     const html = render();
     expect(html).toContain("<h3>Traffic</h3>");
