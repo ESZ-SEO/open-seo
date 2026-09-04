@@ -660,6 +660,20 @@ function timeAxes(width: number, height: number): ChartAxes {
 
 const Y_TICK_COUNT = 4;
 
+/**
+ * Tick steps a reader can add up in their head, ordered so the first one that
+ * clears the data is the one used.
+ *
+ * The gaps matter as much as the values: the axis top is `step × ticks`, so a
+ * series peaking just above a rung is drawn against the *next* rung, and the
+ * ratio between neighbours is the worst-case share of the plot the data can
+ * end up occupying. The old ladder jumped 2.5 → 5, which let a chart use half
+ * its own height (a 4.6M peak drew against a 6M axis, sitting in the bottom
+ * three quarters of the plot). No gap here is wider than 4:3, and every rung
+ * still divides into labels of one decimal place at most.
+ */
+const NICE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 10] as const;
+
 /** Axis top rounded up so the labels land on round numbers — the reference's
  *  axis reads 0 / 500K / 1M / 1.5M / 2M, not 0 / 431.2K / 862.4K. Picks a nice
  *  step first and multiplies back up, because a nice *maximum* alone still
@@ -669,9 +683,7 @@ function niceAxisTop(max: number): number {
   const rawStep = max / Y_TICK_COUNT;
   const magnitude = 10 ** Math.floor(Math.log10(rawStep));
   const normalized = rawStep / magnitude;
-  const step =
-    ([1, 1.5, 2, 2.5, 5, 7.5, 10].find((s) => normalized <= s) ?? 10) *
-    magnitude;
+  const step = (NICE_STEPS.find((s) => normalized <= s) ?? 10) * magnitude;
   return step * Y_TICK_COUNT;
 }
 
@@ -821,11 +833,18 @@ export function renderStackedAreaChart(
     })
     .join("");
 
+  // Legend order is the stack read top-down, which is the reverse of the draw
+  // order: `series[0]` is the band at the *bottom*. Listing it first put
+  // "51–100" at the head of a legend whose first band on screen is "Top 3" —
+  // the reader's eye and the label row disagreed about which end was which.
+  // Mapped before reversing so each entry keeps its own series' colour.
   const legend = renderLegendRow(
-    series.map((s, si) => ({
-      label: s.label,
-      color: s.color ?? seriesColor(si),
-    })),
+    series
+      .map((s, si) => ({
+        label: s.label,
+        color: s.color ?? seriesColor(si),
+      }))
+      .reverse(),
   );
 
   return svg(
