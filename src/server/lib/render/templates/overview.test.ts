@@ -315,8 +315,9 @@ describe("renderOverviewReport · template", () => {
   it("renders the historical traffic chart when the series has enough months", () => {
     const html = render();
     expect(html).toContain("<h3>Traffic</h3>");
-    // Real data points → line chart SVG, not the placeholder.
-    expect(html).toMatch(/<path[^>]+stroke="#1f6feb"/);
+    // Real data points → line chart SVG, not the placeholder. The stroke is
+    // the report's periwinkle accent (VIS-01), passed in by the template.
+    expect(html).toMatch(/<path[^>]+stroke="#6868d8"/);
     expect(html).not.toContain("Not enough history yet");
   });
 

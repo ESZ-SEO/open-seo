@@ -55,9 +55,12 @@ const OUTPUT_PATH = path.join(
  *  the shot answers the only question that matters for the bottom grid: does
  *  it fit above 1231px? */
 const PARITY_VIEWPORT = { width: 1316, height: 1231 } as const;
+/** Always the *current* state, never a milestone name: the milestone captures
+ *  (`overview-parity-p0-final.png`) are the evidence a checkpoint was met, and
+ *  a script that overwrites them on every run makes their names a lie. */
 const PARITY_PATH = path.join(
   REPO_ROOT,
-  ".dev/designer/overview-parity-p0-final.png",
+  ".dev/designer/overview-parity-current.png",
 );
 const CHART_BENCH_PATH = path.join(
   REPO_ROOT,

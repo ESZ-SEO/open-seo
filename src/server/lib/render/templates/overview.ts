@@ -262,6 +262,40 @@ function quickMarketPills(
   return `<div class="markets">${pills}<span class="pill pill--more">…</span></div>`;
 }
 
+/* ----------------------------- Palette ----------------------------- */
+
+/**
+ * The report's colour tokens, in one place (audit §3 / VIS-01).
+ *
+ * They live in TypeScript rather than only in the `:root` block because half
+ * of them are consumed outside CSS — chart series, donut segments and bucket
+ * bands are passed to `charts.tsx` as literal colours. Declaring them twice is
+ * how the navy the audit asked us to drop survived in the charts after the
+ * stylesheet had already moved on.
+ *
+ * `charts.tsx` keeps its own `PALETTE`: it is the default for the Spanish
+ * backlinks/competitors reports, which this work is not allowed to restyle.
+ * Every colour the Overview cares about is passed in explicitly from here.
+ */
+const COLORS = {
+  /** Near-black body ink. The audit's whole VIS-01 point: text is not blue. */
+  ink: "#202020",
+  muted: "#6b7280",
+  /** Periwinkle. Links, active states, primary series — never body copy. */
+  accent: "#6868d8",
+  /** Cool lavender: selected controls (pills, tabs, segments). */
+  lavender: "#e6e9fc",
+  /** Warm lavender: tags and badges sitting on a white card. */
+  lavenderWarm: "#eae5fe",
+  /** Reserved for the second traffic series and the non-AI SERP features
+   *  slice. Deliberately teal rather than green — green stays available for a
+   *  semantic positive (a delta), which is the one thing VIS-01 asks us to
+   *  keep it for. */
+  mint: "#14b8a6",
+  /** AI Overviews, the reference's own hue for the generative slice. */
+  magenta: "#d946ef",
+} as const;
+
 /* ----------------------------- Icons ----------------------------- */
 
 const ICONS = {
@@ -270,6 +304,7 @@ const ICONS = {
   info: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4M12 8h.01"></path></svg>`,
   external: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>`,
   download: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"></path></svg>`,
+  upload: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"></path></svg>`,
   chevron: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>`,
   device: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>`,
   sparkle: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none"><path d="M12 2.5 13.8 8 19.5 9.8 13.8 11.6 12 17.1 10.2 11.6 4.5 9.8 10.2 8z"></path><path d="M18.5 15.2 19.4 18l2.8.9-2.8.9-.9 2.8-.9-2.8-2.8-.9 2.8-.9z"></path></svg>`,
@@ -356,19 +391,38 @@ function renderAiSearchCard(): string {
 
 /* ----------------------------- Distribution rail ----------------------------- */
 
-/** Brand palette for the bucket segments — fixed order so the chart legend
- *  matches the spec example (Top 3 = brand, 4–10 = accent, then warn / brand
- *  dark / orange / teal for the smaller buckets). Declared up here because the
- *  rail's SERP donut reuses two of these colours (RAIL-03) and a `const` read
- *  before its declaration is a load-time crash, not a lint nit. */
+/**
+ * Bucket colours: one periwinkle ramp, darkest at Top 3, fading to the pale
+ * lavender the reference gives its long tail (VIS-01).
+ *
+ * A ramp rather than six unrelated hues because the buckets *are* a scale —
+ * position 1 to position 100 — and the old palette (navy, teal, slate, orange,
+ * green) read as five unrelated categories with a semantic green among them.
+ * Declared up here because the rail's SERP donut reuses one of these (RAIL-03)
+ * and a `const` read before its declaration is a load-time crash, not a lint
+ * nit.
+ */
 const BUCKET_COLORS: Record<KeywordBucket, string> = {
-  top3: "#1f6feb",
-  rank4to10: "#14b8a6",
-  rank11to20: "#0b3d91",
-  rank21to50: "#94a3b8",
-  rank51to100: "#fb923c",
-  serpFeatures: "#22c55e",
+  top3: "#3f3ab0",
+  rank4to10: "#5a55ce",
+  rank11to20: COLORS.accent,
+  rank21to50: "#8e92e8",
+  rank51to100: "#b3b9f2",
+  serpFeatures: COLORS.mint,
 };
+
+/**
+ * The "no rows" row (VIS-03).
+ *
+ * `is-empty` is what keeps the table's height: a bare one-line message
+ * collapses a five-row table to ~30px, and a page whose modules change size
+ * depending on whether an endpoint answered is a page that reflows in front of
+ * whoever is reading it. The height comes from CSS keyed to the table, so the
+ * empty state occupies exactly what the populated state would.
+ */
+function emptyRow(columns: number): string {
+  return `<tr class="is-empty"><td colspan="${columns}" class="muted center">No data</td></tr>`;
+}
 
 /** Google mode: the share / traffic / keywords the report actually measures. */
 function googleCountryRows(
@@ -376,7 +430,7 @@ function googleCountryRows(
   flags: Record<string, string>,
 ): string {
   if (rows.length === 0) {
-    return `<tr><td colspan="4" class="muted center">No data</td></tr>`;
+    return emptyRow(4);
   }
   return rows
     .map(
@@ -396,7 +450,7 @@ function aiCountryRows(
   flags: Record<string, string>,
 ): string {
   if (rows.length === 0) {
-    return `<tr><td colspan="3" class="muted center">No data</td></tr>`;
+    return emptyRow(3);
   }
   return rows
     .map(
@@ -448,12 +502,9 @@ function renderTopCitedSources(countryFlag: string): string {
  * ~100px rail ornament whose legend has to align with the rail's other rows.
  */
 const SERP_SEGMENTS = [
-  // Organic and Other SERP Features reuse the Keywords chart's series colours
-  // (RAIL-03). AI Overviews has no counterpart there — we don't plot it — so
-  // it takes the reference's magenta.
-  { label: "Organic", color: BUCKET_COLORS.top3 },
-  { label: "AI Overviews", color: "#d946ef" },
-  { label: "Other SERP Features", color: BUCKET_COLORS.serpFeatures },
+  { label: "Organic", color: COLORS.accent },
+  { label: "AI Overviews", color: COLORS.magenta },
+  { label: "Other SERP Features", color: COLORS.mint },
 ] as const;
 
 function renderSerpDistribution(): string {
@@ -590,7 +641,7 @@ function trafficChart(
   }
 
   const series: TimeSeries[] = [
-    { label: "Organic Traffic", color: "#1f6feb", points },
+    { label: "Organic Traffic", color: COLORS.accent, points },
   ];
   // The chart samples every series on the first one's dates, so a paid series
   // of a different length would be read off the wrong months. A paid series
@@ -605,7 +656,11 @@ function trafficChart(
     paidPoints.length === points.length &&
     realPointCount(paidPoints) >= MIN_HISTORY_POINTS
   ) {
-    series.push({ label: "Paid Traffic", color: "#14b8a6", points: paidPoints });
+    series.push({
+      label: "Paid Traffic",
+      color: COLORS.mint,
+      points: paidPoints,
+    });
   }
 
   return {
@@ -710,7 +765,7 @@ const ORGANIC_ROWS = 5;
 
 function organicKeywordRows(rows: TopKeywordRow[]): string {
   if (rows.length === 0) {
-    return `<tr><td colspan="6" class="muted center">No data</td></tr>`;
+    return emptyRow(6);
   }
   return rows
     .slice(0, ORGANIC_ROWS)
@@ -849,13 +904,16 @@ export function renderOverviewReport({
   :root {
     --bg: #f4f5f5;
     --card: #ffffff;
-    --text: #202020;
-    --muted: #6b7280;
+    --text: ${COLORS.ink};
+    --muted: ${COLORS.muted};
     --border: #eeeff0;
     --line: #e8e9ea;
-    --brand: oklch(0.53 0.157 279.2);
-    --brand-soft: #e7e5ff;
-    --accent: #14b8a6;
+    --brand: ${COLORS.accent};
+    /* Two lavenders, as the audit specifies: the warm one carries tags and
+       badges, the cool one marks a selected control. */
+    --brand-soft: ${COLORS.lavenderWarm};
+    --brand-surface: ${COLORS.lavender};
+    --accent: ${COLORS.mint};
     --card-shadow: rgba(0, 21, 16, 0.07) 0 0 1px 0, rgba(0, 21, 16, 0.07) 0 1px 3px 0;
     /* Big panels sit 12px apart; the reference measures 10–12 (audit §A). */
     --gap: 10px;
@@ -920,7 +978,7 @@ export function renderOverviewReport({
     background: var(--card); border: 1px solid var(--border); color: var(--text);
   }
   .chip svg { width: 13px; height: 13px; color: var(--muted); }
-  .chip--active { background: var(--brand-soft); border-color: transparent; color: var(--brand); }
+  .chip--active { background: var(--brand-surface); border-color: transparent; color: var(--brand); }
   .chip--active svg { color: var(--brand); }
 
   /* Market shortcuts sit tighter than the other filters and carry no chrome
@@ -933,7 +991,7 @@ export function renderOverviewReport({
     color: var(--text); white-space: nowrap;
   }
   .pill svg { width: 13px; height: 13px; color: var(--muted); }
-  .pill--active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .pill--active { background: var(--brand-surface); color: var(--brand); font-weight: 600; }
   .pill--active svg { color: var(--brand); }
   .pill--more { color: var(--muted); letter-spacing: 1px; padding: 0 6px; }
 
@@ -971,10 +1029,12 @@ export function renderOverviewReport({
   .badge {
     display: inline-flex; align-items: center; height: 24px; padding: 0 14px;
     font-size: 12.5px; font-weight: 500; line-height: 20px;
-    background: rgb(231, 229, 255); color: rgb(92, 83, 217);
+    background: var(--brand-soft); color: var(--brand);
     border-radius: 10px 0 12px 0;
   }
-  .badge-ai { background: #ece7ff; color: #6a4ee0; }
+  /* Cooler lavender so the two cards' corner tabs stay distinguishable at a
+     glance without a second accent hue. */
+  .badge-ai { background: var(--brand-surface); }
 
   /* AI Search — three metric columns over four source rows. Same column
      rhythm for both, so the source numbers sit under Mentions and Cited Pages
@@ -985,13 +1045,13 @@ export function renderOverviewReport({
     align-items: baseline; column-gap: 8px;
   }
   .ai-head { font-size: 12px; color: var(--muted); font-weight: 500; }
-  .ai-value { font-size: 19px; font-weight: 700; color: var(--brand); margin-top: 2px; }
+  .ai-value { font-size: 19px; font-weight: 700; color: var(--text); margin-top: 2px; }
   .ai-rows { margin-top: 6px; display: flex; flex-direction: column; gap: 1px; }
   .ai-row { font-size: 12px; line-height: 15px; color: var(--text); }
   .ai-row-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
   .ai-dot {
     width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
-    background: var(--brand-soft); box-shadow: inset 0 0 0 1px rgba(92, 83, 217, 0.35);
+    background: var(--brand-soft); box-shadow: inset 0 0 0 1px rgba(104, 104, 216, 0.35);
   }
   .ai-note { margin-top: auto; padding-top: 4px; font-size: 10.5px; color: var(--muted); }
 
@@ -1002,13 +1062,16 @@ export function renderOverviewReport({
   .tile:first-child { padding-left: 0; }
   .tile-label {
     display: flex; align-items: center; gap: 5px;
-    font-size: 12.5px; font-weight: 400; line-height: 17px;
+    font-size: 12.5px; font-weight: 500; line-height: 17px;
     color: var(--text); margin-bottom: 5px; white-space: nowrap;
   }
   .tile-label svg { color: var(--muted); width: 13px; height: 13px; flex-shrink: 0; }
   .tile-info { display: inline-flex; color: #b7bcc4; }
   .tile-info svg { width: 12px; height: 12px; color: inherit; }
-  .tile-value { font-size: 25px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--brand); }
+  /* Near-black, not periwinkle: the accent marks what is interactive (links,
+     selected controls) and a wall of coloured figures is exactly the "body
+     text reads blue" the audit asked us to leave behind (VIS-01). */
+  .tile-value { font-size: 25px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--text); }
   .tile-value--empty { color: var(--muted); font-weight: 600; }
 
   /* ---------- analytics workspace ---------- */
@@ -1022,7 +1085,16 @@ export function renderOverviewReport({
     display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
     border-radius: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted);
   }
-  .seg-item.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .seg-item.active { background: var(--brand-surface); color: var(--brand); font-weight: 600; }
+  /* Granularity + export sit at the far end of the workspace header (ANA-03).
+     "Months" is the active one because the series behind both charts is
+     monthly — a highlighted "Days" would describe a resolution this report
+     never asked the API for. */
+  .ws-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+  .seg--boxed { gap: 0; border: 1px solid #d6d8dc; border-radius: 4px; overflow: hidden; }
+  .seg--boxed .seg-item { height: 24px; border-radius: 0; }
+  .seg--boxed .seg-item + .seg-item { border-left: 1px solid #d6d8dc; }
+  .ws-tools .btn-outline { height: 26px; }
   .range { display: inline-flex; gap: 14px; font-size: 12.5px; color: var(--muted); }
   .range .active { color: var(--brand); font-weight: 600; border-bottom: 2px solid var(--brand); padding-bottom: 2px; }
 
@@ -1030,7 +1102,7 @@ export function renderOverviewReport({
   .rail { padding-right: 16px; border-right: 1px solid var(--border); min-width: 0; }
   .rail-block + .rail-block { margin-top: 12px; }
   .rail-title {
-    margin: 0 0 8px; font-size: 14.5px; font-weight: 700;
+    margin: 0 0 8px; font-size: 15px; font-weight: 700;
     display: flex; align-items: center; gap: 6px;
   }
   .rail-foot { font-size: 10.5px; color: var(--muted); margin-top: 8px; }
@@ -1058,7 +1130,7 @@ export function renderOverviewReport({
   .chart-block + .chart-block {
     margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
   }
-  .chart-block h3 { margin: 0 0 4px; font-size: 14.5px; font-weight: 700; }
+  .chart-block h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
   .chart-body { display: block; }
   .chart-body svg { width: 100%; height: auto; }
   .chart-foot { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
@@ -1072,7 +1144,7 @@ export function renderOverviewReport({
   .bottom-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
   .card-bottom { min-height: 288px; display: flex; flex-direction: column; }
   .bottom-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
-  .bottom-head h3 { margin: 0; font-size: 14.5px; font-weight: 700; }
+  .bottom-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
   .bottom-head .count { font-size: 14px; color: var(--muted); font-weight: 500; }
   .btn-dark {
     display: inline-flex; align-items: center; align-self: flex-start;
@@ -1089,6 +1161,10 @@ export function renderOverviewReport({
   table.data td.num, table.data th.num { text-align: right; font-variant-numeric: tabular-nums; }
   table.data td.center, table.data th.center { text-align: center; }
   table.data tr:last-child td { border-bottom: 0; }
+  /* An empty table keeps the height of a populated one (VIS-03): the rail
+     budgets two country rows, Top Organic Keywords five. */
+  table.data tr.is-empty td { height: 64px; }
+  table.data--organic tr.is-empty td { height: 148px; }
   table.data td:first-child, table.data th:first-child { padding-left: 0; }
   table.data td:last-child, table.data th:last-child { padding-right: 0; }
   /* Fixed layout so the keyword column keeps its share of the half-width card
@@ -1200,6 +1276,13 @@ export function renderOverviewReport({
         </div>
         <div class="range">
           <span>1M</span><span>6M</span><span>1Y</span><span class="active">2Y</span><span>All time</span>
+        </div>
+        <div class="ws-tools">
+          <span class="seg seg--boxed">
+            <span class="seg-item">Days</span>
+            <span class="seg-item active">Months</span>
+          </span>
+          <span class="btn-outline">${ICONS.upload}Export</span>
         </div>
       </div>
       <div class="ws-body">
