@@ -40,7 +40,7 @@ export const renderParamsSchema = z.object({
       const cleaned = list.map((s) => s.trim()).filter((s) => s.length > 0);
       // Dedupe + drop self-references + cap at 2.
       const deduped = Array.from(new Set(cleaned)).filter((c) => c.length > 0);
-      const final = deduped.toSorted().slice(0, 2);
+      const final = deduped.sort().slice(0, 2);
       return final.length > 0 ? final : undefined;
     })
     .pipe(z.array(z.string().min(1)).max(2).optional()),

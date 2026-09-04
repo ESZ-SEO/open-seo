@@ -6,6 +6,7 @@ import {
   type Ga4PropertySelection,
 } from "@/client/features/ga4/Ga4PropertyPicker";
 import { GoogleGlyph } from "@/client/features/gsc/GoogleGlyph";
+import { GoogleLinkErrorAlert } from "@/client/features/integrations/GoogleLinkErrorAlert";
 import { GoogleOAuthSetupWarning } from "@/client/features/integrations/GoogleOAuthSetupWarning";
 import { IntegrationConnectionCard } from "@/client/features/integrations/IntegrationConnectionCard";
 import { GoogleAnalyticsLogo } from "@/client/features/integrations/GoogleProductLogos";
@@ -19,11 +20,7 @@ import {
   listGa4Properties,
   setGa4Property,
 } from "@/serverFunctions/ga4";
-import { useSession } from "@/lib/auth-client";
-import {
-  GA4_SELF_HOSTED_SETUP_DOCS_URL,
-  isGa4ConnectAvailable,
-} from "@/shared/ga4";
+import { GA4_SELF_HOSTED_SETUP_DOCS_URL } from "@/shared/ga4";
 
 export function GoogleAnalyticsConnectionCard({
   projectId,
@@ -38,7 +35,6 @@ export function GoogleAnalyticsConnectionCard({
 }) {
   const hosted = isHostedClientAuthMode();
   const queryClient = useQueryClient();
-  const { data: session } = useSession();
   const [picking, setPicking] = React.useState(false);
   const [selection, setSelection] = React.useState<Ga4PropertySelection | null>(
     null,
@@ -50,14 +46,6 @@ export function GoogleAnalyticsConnectionCard({
   });
   const connection = connectionQuery.data;
   const connected = Boolean(connection?.connected);
-  // Hide the hosted connect surface while the OAuth app awaits Google's
-  // approval, but keep the card for users who already hold a grant so they
-  // can finish property selection or disconnect.
-  const hiddenPendingApproval =
-    !isGa4ConnectAvailable(session?.user?.email) &&
-    hosted &&
-    !connected &&
-    !connection?.currentUserHasGrant;
   const selfHostedNeedsSetup =
     !hosted && connectionQuery.isSuccess && !connection?.googleOAuthConfigured;
   const showPicker = picking || (connection?.currentUserHasGrant && !connected);
@@ -92,6 +80,9 @@ export function GoogleAnalyticsConnectionCard({
     void queryClient.invalidateQueries({
       queryKey: ["dashboardActivation", projectId],
     });
+    void queryClient.invalidateQueries({
+      queryKey: ["dashboardGa4Report", projectId],
+    });
   };
   const setPropertyMutation = useMutation({
     mutationFn: (selected: Ga4PropertySelection) =>
@@ -116,8 +107,6 @@ export function GoogleAnalyticsConnectionCard({
   });
   const handleConnect = () => void startGoogleLink("ga4", window.location.href);
 
-  if (hiddenPendingApproval) return null;
-
   return (
     <>
       {heading}
@@ -134,6 +123,7 @@ export function GoogleAnalyticsConnectionCard({
                 : "disconnected"
         }
       >
+        <GoogleLinkErrorAlert provider="ga4" className="mb-4" />
         {connectionQuery.isLoading ? (
           <div className="flex items-center gap-2 text-sm text-base-content/50">
             <span className="loading loading-spinner loading-sm" />

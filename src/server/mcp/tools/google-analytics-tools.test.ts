@@ -82,7 +82,7 @@ describe("Google Analytics MCP tools", () => {
     expect(result.structuredContent).toMatchObject({
       status: "ok",
       rowCount: 1,
-      meta: { projectId: "project_1", organizationId: "org_123" },
+      meta: { projectId: "project_1" },
     });
   });
 
@@ -152,7 +152,7 @@ describe("Google Analytics MCP tools", () => {
       status: "error",
       error: {
         code: "ga4_reconnect_required",
-        actionUrl: "https://open-seo.test/p/project_1/settings",
+        actionUrl: "https://open-seo.test/p/project_1/settings/integrations",
       },
     });
   });
@@ -253,6 +253,7 @@ describe("Google Analytics MCP tools", () => {
       },
       comparison: {},
       trend: [],
+      warnings: [],
     });
     mocks.getMeasurementHealth.mockResolvedValue({
       status: "ok",

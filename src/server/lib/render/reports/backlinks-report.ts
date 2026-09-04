@@ -54,7 +54,7 @@ export type BuildBacklinksReportInput = {
  * indexed by search-engine — see `DataforseoLabsMetricsInfo.etv`.
  */
 function pickOrganicTraffic(
-  items: { metrics?: { organic?: { etv?: number | null } } }[],
+  items: { metrics?: { organic?: { etv?: number | null } | null } | null }[],
 ): number | null {
   const item = items[0];
   const etv = item?.metrics?.organic?.etv;
@@ -193,7 +193,7 @@ function countBy<T>(
       // share normalised against the actual total below
       share: count / total,
     }))
-    .toSorted((a, b) => b.count - a.count)
+    .sort((a, b) => b.count - a.count)
     .slice(0, limit);
   return { rows };
 }
@@ -296,7 +296,7 @@ function buildTables(rows: BacklinksItem[]) {
       share: count / total,
       count,
     }))
-    .toSorted((a, b) => b.count - a.count);
+    .sort((a, b) => b.count - a.count);
 
   const attributes: AttributeRow[] = Array.from(attributeCounts.entries())
     .map(([attribute, count]) => ({
@@ -304,7 +304,7 @@ function buildTables(rows: BacklinksItem[]) {
       share: count / total,
       count,
     }))
-    .toSorted((a, b) => b.count - a.count);
+    .sort((a, b) => b.count - a.count);
 
   const categories: CategoryRow[] = Array.from(categoryCounts.entries())
     .map(([category, count]) => ({
@@ -312,7 +312,7 @@ function buildTables(rows: BacklinksItem[]) {
       share: count / total,
       count,
     }))
-    .toSorted((a, b) => b.count - a.count)
+    .sort((a, b) => b.count - a.count)
     .slice(0, 6);
 
   const topAnchors: AnchorRow[] = Array.from(anchorCounts.entries())
@@ -321,7 +321,7 @@ function buildTables(rows: BacklinksItem[]) {
       backlinks: entry.backlinks,
       domains: entry.domains.size,
     }))
-    .toSorted((a, b) => b.backlinks - a.backlinks)
+    .sort((a, b) => b.backlinks - a.backlinks)
     .slice(0, 10);
 
   return { categories, types, attributes, topAnchors };
@@ -330,7 +330,7 @@ function buildTables(rows: BacklinksItem[]) {
 /** Top-N referring domains for the network graph (deterministic ordering). */
 function buildNetworkGraph(target: string, referring: ReferringDomainItem[]) {
   const top = [...referring]
-    .toSorted((a, b) => (b.backlinks ?? 0) - (a.backlinks ?? 0))
+    .sort((a, b) => (b.backlinks ?? 0) - (a.backlinks ?? 0))
     .slice(0, 18);
 
   const nodes: BacklinksGraphNode[] = [
@@ -360,7 +360,7 @@ function buildNetworkGraph(target: string, referring: ReferringDomainItem[]) {
 function buildHistorySeries(history: BacklinksHistoryItem[]) {
   const sorted = [...history]
     .filter((h): h is BacklinksHistoryItem & { date: string } => !!h.date)
-    .toSorted((a, b) => a.date.localeCompare(b.date))
+    .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-HISTORY_DAYS);
 
   const referringArea = sorted.map((h) => ({
@@ -506,8 +506,9 @@ export async function buildBacklinksReportData(
     historySettled.status === "fulfilled"
       ? (historySettled.value.data ?? [])
       : [];
-  const labsItems: { metrics?: { organic?: { etv?: number | null } } }[] =
-    labsSettled.status === "fulfilled" ? (labsSettled.value.data ?? []) : [];
+  const labsItems: {
+    metrics?: { organic?: { etv?: number | null } | null } | null;
+  }[] = labsSettled.status === "fulfilled" ? (labsSettled.value.data ?? []) : [];
 
   // ---- Tiles ----
   const authorityScore = computeAuthorityScore(summary);

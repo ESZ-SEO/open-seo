@@ -20,7 +20,7 @@ MCP connects your agent to OpenSEO data. Skills tell your agent which SEO workfl
 
 ## Start here
 
-- [SEO Project Setup](/docs/skills/seo-project-setup): set up a durable project workspace so your agent can reuse goals, context, exports, and preferences across sessions.
+- [SEO Project Setup](/docs/skills/seo-project-setup): save your goals, positioning, competitors, and key pages to your project context, so every other skill reuses them.
 - [SEO Coach](/docs/skills/seo-coach): choose the next workflow when you are new to SEO or unsure what to run first.
 
 ## Audit workflows

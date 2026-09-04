@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { getTableColumns, getTableName, is, Table } from "drizzle-orm";
 import { getTableConfig as getSqliteTableConfig } from "drizzle-orm/sqlite-core";
 import { getTableConfig as getPgTableConfig } from "drizzle-orm/pg-core";
+import { sort } from "remeda";
 import { describe, expect, it } from "vitest";
 import * as sqliteApp from "./app.schema";
+import * as sqliteProjectContext from "./project-context.schema";
 import * as sqliteAudit from "./audit.schema";
 import * as sqliteSam from "./sam.schema";
 import * as sqliteAuth from "./better-auth-schema";
@@ -13,6 +15,7 @@ import * as sqliteGa4 from "./ga4.schema";
 import * as sqliteGsc from "./gsc.schema";
 import * as sqliteTelemetry from "./telemetry.schema";
 import * as pgApp from "./pg/app.schema";
+import * as pgProjectContext from "./pg/project-context.schema";
 import * as pgAudit from "./pg/audit.schema";
 import * as pgSam from "./pg/sam.schema";
 import * as pgAuth from "./pg/better-auth-schema";
@@ -30,7 +33,7 @@ import * as pgTelemetry from "./pg/telemetry.schema";
 type Dialect = "sqlite" | "pg";
 
 const sortStrings = (values: string[]) =>
-  values.toSorted((a, b) => a.localeCompare(b));
+  sort(values, (a, b) => a.localeCompare(b));
 
 function asStringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
@@ -143,6 +146,7 @@ function checkNames(table: Table, dialect: Dialect): string[] {
 
 const sqliteAppTables = tablesFrom(
   sqliteApp,
+  sqliteProjectContext,
   sqliteAudit,
   sqliteSam,
   sqliteBilling,
@@ -152,6 +156,7 @@ const sqliteAppTables = tablesFrom(
 );
 const pgAppTables = tablesFrom(
   pgApp,
+  pgProjectContext,
   pgAudit,
   pgSam,
   pgBilling,
@@ -259,6 +264,8 @@ const REQUIRED_BETTER_AUTH_INDEXES: {
   { table: "organization", columns: ["slug"], unique: true },
   { table: "member", columns: ["organization_id"], unique: false },
   { table: "member", columns: ["user_id"], unique: false },
+  // Backstop for duplicate memberships (also guarded by beforeAcceptInvitation).
+  { table: "member", columns: ["organization_id", "user_id"], unique: true },
   { table: "invitation", columns: ["organization_id"], unique: false },
   { table: "invitation", columns: ["email"], unique: false },
 ];

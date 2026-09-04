@@ -224,17 +224,17 @@ describe("backlinks-report · helpers", () => {
       expect(tables.topAnchors[0].domains).toBe(2);
 
       // Attribute buckets
-      const labels = tables.attributes.map((a) => a.attribute).toSorted();
+      const labels = tables.attributes.map((a) => a.attribute).sort();
       expect(labels).toContain("Follow");
       expect(labels).toContain("Nofollow");
 
       // Types
-      const typeLabels = tables.types.map((t) => t.type).toSorted();
+      const typeLabels = tables.types.map((t) => t.type).sort();
       expect(typeLabels).toContain("Texto");
       expect(typeLabels).toContain("Imagen");
 
       // Categories (TLD of host)
-      const categories = tables.categories.map((c) => c.category).toSorted();
+      const categories = tables.categories.map((c) => c.category).sort();
       expect(categories.length).toBeGreaterThan(0);
     });
   });

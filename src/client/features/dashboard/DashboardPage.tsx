@@ -3,8 +3,8 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronLeft, ChevronRight, Check } from "lucide-react";
+import { sort } from "remeda";
 import { captureClientEvent } from "@/client/lib/posthog";
-import { Ga4ConnectCard } from "@/client/features/dashboard/Ga4ConnectCard";
 import {
   computeNextStep,
   isStepDone,
@@ -15,6 +15,7 @@ import {
   BacklinkPulseCard,
   GscCard,
 } from "@/client/features/dashboard/DashboardCards";
+import { Ga4Card } from "@/client/features/dashboard/Ga4Card";
 import { McpConnectCard } from "@/client/features/dashboard/McpConnectCard";
 import { WorkspaceMergeBanner } from "@/client/features/dashboard/WorkspaceMergeBanner";
 import { getStandardErrorMessage } from "@/client/lib/error-messages";
@@ -26,8 +27,6 @@ import {
   refreshDashboardBacklinkSnapshot,
 } from "@/serverFunctions/dashboard";
 import { setProjectDomain } from "@/serverFunctions/projects";
-import { useSession } from "@/lib/auth-client";
-import { isGa4ConnectAvailable } from "@/shared/ga4";
 import type { DashboardHeroStep } from "@/types/schemas/dashboard";
 
 const HERO_COPY: Record<
@@ -236,7 +235,6 @@ function OnboardingChecklist({
 
 export function DashboardPage({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
-  const { data: session } = useSession();
 
   const activationQuery = useQuery({
     queryKey: ["dashboardActivation", projectId],
@@ -304,6 +302,61 @@ export function DashboardPage({ projectId }: { projectId: string }) {
   const gscConnected = activation.gsc.connected;
   const ga4Connected = activation.ga4.connected;
 
+  // Array order is the within-bucket order after the data-first sort below:
+  // the MCP pitch leads the setup cards.
+  const cards = [
+    ...(activation.mcp.firstToolCallAt || activation.mcp.cardDismissedAt
+      ? []
+      : [
+          {
+            key: "mcp",
+            hasData: false,
+            node: (
+              <McpConnectCard projectId={projectId} activation={activation} />
+            ),
+          },
+        ]),
+    {
+      key: "gsc",
+      hasData: gscConnected,
+      node: <GscCard projectId={projectId} connected={gscConnected} />,
+    },
+    ...(ga4Connected || !activation.ga4.cardDismissedAt
+      ? [
+          {
+            key: "ga4",
+            hasData: ga4Connected,
+            node: <Ga4Card projectId={projectId} connected={ga4Connected} />,
+          },
+        ]
+      : []),
+    {
+      key: "audit",
+      hasData: overview?.audit != null,
+      node: (
+        <AuditHealthCard
+          projectId={projectId}
+          audit={overview?.audit ?? null}
+        />
+      ),
+    },
+    ...(showBacklinks
+      ? [
+          {
+            key: "backlinks",
+            hasData: overview?.backlinks != null || refreshMutation.isPending,
+            node: (
+              <BacklinkPulseCard
+                projectId={projectId}
+                backlinks={overview?.backlinks ?? null}
+                refreshing={refreshMutation.isPending}
+              />
+            ),
+          },
+        ]
+      : []),
+  ];
+
   return (
     <div className="px-4 py-4 pb-24 md:px-6 md:py-6 md:pb-8">
       <div className="mx-auto flex max-w-5xl flex-col gap-5">
@@ -316,74 +369,11 @@ export function DashboardPage({ projectId }: { projectId: string }) {
         {/* Every card is half width on large screens (only the checklist spans).
           Cards with data render before setup pitches and empty states. */}
         <div className="grid items-start gap-5 lg:grid-cols-2">
-          {[
-            // Array order is the within-bucket order after the data-first sort:
-            // the MCP pitch leads the setup cards.
-            ...(activation.mcp.firstToolCallAt || activation.mcp.cardDismissedAt
-              ? []
-              : [
-                  {
-                    key: "mcp",
-                    hasData: false,
-                    node: (
-                      <McpConnectCard
-                        projectId={projectId}
-                        activation={activation}
-                      />
-                    ),
-                  },
-                ]),
-            {
-              key: "gsc",
-              hasData: gscConnected,
-              node: <GscCard projectId={projectId} connected={gscConnected} />,
-            },
-            ...(isGa4ConnectAvailable(session?.user?.email) &&
-            (ga4Connected || !activation.ga4.cardDismissedAt)
-              ? [
-                  {
-                    key: "ga4",
-                    hasData: ga4Connected,
-                    node: (
-                      <Ga4ConnectCard
-                        projectId={projectId}
-                        connected={ga4Connected}
-                      />
-                    ),
-                  },
-                ]
-              : []),
-            {
-              key: "audit",
-              hasData: overview?.audit != null,
-              node: (
-                <AuditHealthCard
-                  projectId={projectId}
-                  audit={overview?.audit ?? null}
-                />
-              ),
-            },
-            ...(showBacklinks
-              ? [
-                  {
-                    key: "backlinks",
-                    hasData:
-                      overview?.backlinks != null || refreshMutation.isPending,
-                    node: (
-                      <BacklinkPulseCard
-                        projectId={projectId}
-                        backlinks={overview?.backlinks ?? null}
-                        refreshing={refreshMutation.isPending}
-                      />
-                    ),
-                  },
-                ]
-              : []),
-          ]
-            .toSorted((a, b) => Number(b.hasData) - Number(a.hasData))
-            .map((card) => (
+          {sort(cards, (a, b) => Number(b.hasData) - Number(a.hasData)).map(
+            (card) => (
               <div key={card.key}>{card.node}</div>
-            ))}
+            ),
+          )}
         </div>
       </div>
     </div>

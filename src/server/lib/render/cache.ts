@@ -36,7 +36,7 @@ function normalizeCompetitors(competitors: readonly string[] | undefined) {
   if (!competitors || competitors.length === 0) return [] as string[];
   // Sort defensively — the schema already enforces sorted uniqueness, but the
   // cache key MUST stay stable if callers ever pass unsorted input.
-  return Array.from(new Set(competitors)).toSorted();
+  return Array.from(new Set(competitors)).sort();
 }
 
 /**

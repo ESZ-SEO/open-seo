@@ -80,6 +80,8 @@ After the skill files are available to your agent, run the matching slash comman
 - `/competitive-landscape`
 - `/competitor-analysis`
 - `/link-prospecting`
+- `/local-seo`
+- `/seo-audit`
 
 ## Next step
 

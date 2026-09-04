@@ -6,7 +6,6 @@ import {
 import type { z } from "zod";
 import {
   createMcpToolContext,
-  MCP_AUTH_CONTEXT_PROP,
   type McpProps,
   type ToolContext,
 } from "@/server/mcp/context";
@@ -37,6 +36,10 @@ import {
 } from "@/server/mcp/tools/google-analytics-tools";
 import { createProjectTool } from "@/server/mcp/tools/create-project";
 import { listProjectsTool } from "@/server/mcp/tools/list-projects";
+import {
+  getProjectContextTool,
+  updateProjectContextTool,
+} from "@/server/mcp/tools/project-context";
 import { listSavedKeywordsTool } from "@/server/mcp/tools/list-saved-keywords";
 import {
   findSerpCompetitorsTool,
@@ -59,7 +62,6 @@ import {
   getSearchConsolePerformanceTool,
   inspectUrlsTool,
 } from "@/server/mcp/tools/search-console-tools";
-import { GA4_OAUTH_APP_PENDING, isGa4ConnectAvailable } from "@/shared/ga4";
 import {
   getAuditIssuesTool,
   getAuditPagesTool,
@@ -141,6 +143,11 @@ export function createOpenSeoMcpServer(authProps: McpProps) {
       ],
     },
     {
+      // The tool list is fixed per request and no list_changed notification
+      // is ever published, so don't advertise the capability — modern clients
+      // use it to decide whether to open a subscriptions/listen stream.
+      // Without the pre-declaration, registerTool defaults it to true.
+      capabilities: { tools: { listChanged: false } },
       instructions:
         "OpenSEO research tools use credits. Proceed with normal focused research, but ask the user for confirmation before planned batches over 2,000 credits.",
     },
@@ -153,6 +160,8 @@ export function createOpenSeoMcpServer(authProps: McpProps) {
   register(whoamiTool);
   register(listProjectsTool);
   register(createProjectTool);
+  register(getProjectContextTool);
+  register(updateProjectContextTool);
   register(listSavedKeywordsTool);
   register(researchKeywordsTool);
   register(saveKeywordsTool);
@@ -180,21 +189,16 @@ export function createOpenSeoMcpServer(authProps: McpProps) {
   register(getKeywordMetricsTool);
   register(getSearchConsolePerformanceTool);
   register(inspectUrlsTool);
-  if (
-    !GA4_OAUTH_APP_PENDING ||
-    isGa4ConnectAvailable(authProps[MCP_AUTH_CONTEXT_PROP].userEmail)
-  ) {
-    register(getGoogleAnalyticsOrganicLandingPagesTool);
-    register(getGoogleAnalyticsPagePerformanceTool);
-    register(getGoogleAnalyticsKeyEventsTool);
-    register(getSearchOpportunitiesTool);
-    register(getGoogleAnalyticsOrganicOverviewTool);
-    register(getGoogleAnalyticsTrafficAcquisitionTool);
-    register(getGoogleAnalyticsMeasurementHealthTool);
-    register(getGoogleAnalyticsEcommercePerformanceTool);
-    register(getGoogleAnalyticsSiteSearchTool);
-    register(getGoogleAnalyticsAudienceBreakdownTool);
-  }
+  register(getGoogleAnalyticsOrganicLandingPagesTool);
+  register(getGoogleAnalyticsPagePerformanceTool);
+  register(getGoogleAnalyticsKeyEventsTool);
+  register(getSearchOpportunitiesTool);
+  register(getGoogleAnalyticsOrganicOverviewTool);
+  register(getGoogleAnalyticsTrafficAcquisitionTool);
+  register(getGoogleAnalyticsMeasurementHealthTool);
+  register(getGoogleAnalyticsEcommercePerformanceTool);
+  register(getGoogleAnalyticsSiteSearchTool);
+  register(getGoogleAnalyticsAudienceBreakdownTool);
   register(runSiteAuditTool);
   register(getAuditStatusTool);
   register(getAuditIssuesTool);
