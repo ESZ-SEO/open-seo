@@ -823,7 +823,7 @@ export function renderOverviewReport({
      on the reference crop its origin is the card's own origin (0,0), so it
      has to escape the card's padding. The asymmetric radius only makes sense
      in that position. */
-  .card-tab { margin: -16px 0 8px -16px; }
+  .card-tab { margin: -16px 0 6px -16px; }
   .badge {
     display: inline-flex; align-items: center; height: 24px; padding: 0 14px;
     font-size: 12.5px; font-weight: 500; line-height: 20px;
@@ -841,15 +841,15 @@ export function renderOverviewReport({
     align-items: baseline; column-gap: 8px;
   }
   .ai-head { font-size: 12px; color: var(--muted); font-weight: 500; }
-  .ai-value { font-size: 20px; font-weight: 700; color: var(--brand); margin-top: 2px; }
-  .ai-rows { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+  .ai-value { font-size: 19px; font-weight: 700; color: var(--brand); margin-top: 2px; }
+  .ai-rows { margin-top: 6px; display: flex; flex-direction: column; gap: 1px; }
   .ai-row { font-size: 12px; line-height: 15px; color: var(--text); }
   .ai-row-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
   .ai-dot {
     width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
     background: var(--brand-soft); box-shadow: inset 0 0 0 1px rgba(92, 83, 217, 0.35);
   }
-  .ai-note { margin-top: auto; padding-top: 6px; font-size: 10.5px; color: var(--muted); }
+  .ai-note { margin-top: auto; padding-top: 4px; font-size: 10.5px; color: var(--muted); }
 
   /* SEO — 2 rows × 4 columns, hairline dividers between tiles. */
   .tiles { display: flex; flex-direction: column; gap: 12px; }
