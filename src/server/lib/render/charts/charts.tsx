@@ -838,14 +838,12 @@ export function renderStackedAreaChart(
   // "51–100" at the head of a legend whose first band on screen is "Top 3" —
   // the reader's eye and the label row disagreed about which end was which.
   // Mapped before reversing so each entry keeps its own series' colour.
-  const legend = renderLegendRow(
-    series
-      .map((s, si) => ({
-        label: s.label,
-        color: s.color ?? seriesColor(si),
-      }))
-      .reverse(),
-  );
+  const legendEntries: { label: string; color: string }[] = [];
+  for (let si = series.length - 1; si >= 0; si--) {
+    const s = series[si];
+    legendEntries.push({ label: s.label, color: s.color ?? seriesColor(si) });
+  }
+  const legend = renderLegendRow(legendEntries);
 
   return svg(
     width,
