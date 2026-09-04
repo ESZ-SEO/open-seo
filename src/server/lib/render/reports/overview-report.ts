@@ -108,6 +108,23 @@ export type CountryRow = {
   keywords: number | null;
 };
 
+/** One row of the "Top Organic Keywords" table in the bottom grid. Built from
+ *  the same `ranked_keywords` response the bucket chart reads, so the table
+ *  costs no extra request. */
+export type TopKeywordRow = {
+  keyword: string;
+  /** DataForSEO's `main_intent`, verbatim; null when it hasn't classified the
+   *  keyword. The template abbreviates it to a badge letter. */
+  intent: string | null;
+  /** Organic position — `rank_group`, with `rank_absolute` as the fallback,
+   *  the same precedence {@link bucketForKeyword} uses. */
+  position: number | null;
+  volume: number | null;
+  cpc: number | null;
+  /** Estimated traffic value (`etv`) this keyword sends the domain. */
+  traffic: number | null;
+};
+
 /** One point on the "Tráfico orgánico" historical line chart. */
 export type TrendPoint = { date: string; value: number | null };
 
@@ -155,6 +172,8 @@ export type OverviewReportData = {
   /** Distribución por países (sidebar). World + the requested country. */
   tables: {
     countries: Source<CountryRow[]>;
+    /** The domain's highest-traffic ranking keywords, most valuable first. */
+    topKeywords: Source<TopKeywordRow[]>;
   };
   charts: {
     /** Histórico de tráfico. `points` es la serie orgánica; `paidPoints` está
@@ -366,16 +385,19 @@ function rowFromLabs(
  *   - 51–100     → 51..100
  *   - SERP feats → item_types contains featured_snippet / ai_overview / etc.
  */
-function bucketForKeyword(item: DomainRankedKeywordItem): KeywordBucket {
+function rankValueOf(item: DomainRankedKeywordItem): number | null {
   const serpItem = item.ranked_serp_element?.serp_item;
-  const rankValue =
-    typeof serpItem?.rank_group === "number"
-      ? serpItem.rank_group
-      : typeof item.ranked_serp_element?.rank_absolute === "number"
-        ? item.ranked_serp_element.rank_absolute
-        : typeof serpItem?.rank_absolute === "number"
-          ? serpItem.rank_absolute
-          : null;
+  return typeof serpItem?.rank_group === "number"
+    ? serpItem.rank_group
+    : typeof item.ranked_serp_element?.rank_absolute === "number"
+      ? item.ranked_serp_element.rank_absolute
+      : typeof serpItem?.rank_absolute === "number"
+        ? serpItem.rank_absolute
+        : null;
+}
+
+function bucketForKeyword(item: DomainRankedKeywordItem): KeywordBucket {
+  const rankValue = rankValueOf(item);
 
   // SERP features — anything in the SDK's "feature" set should never be
   // counted as a rank bucket, that would distort the chart.
@@ -402,6 +424,44 @@ function emptyBucketCounts(): Record<KeywordBucket, number> {
     rank51to100: 0,
     serpFeatures: 0,
   };
+}
+
+/** How many rows the "Top Organic Keywords" card shows. The template renders
+ *  five; a couple of spares cost nothing and keep the table full if one of the
+ *  leaders turns out to be unnamed. */
+const TOP_KEYWORDS_LIMIT = 8;
+
+/** Reduce one ranked-keyword item to a table row. Returns null for an item
+ *  with no keyword text — a nameless row is a row a reader can't act on. */
+function toTopKeywordRow(
+  item: DomainRankedKeywordItem,
+): TopKeywordRow | null {
+  const keyword = item.keyword_data?.keyword ?? item.keyword ?? null;
+  if (keyword == null || keyword === "") return null;
+  const info = item.keyword_data?.keyword_info;
+  const intent = item.keyword_data?.search_intent_info?.main_intent;
+  return {
+    keyword,
+    intent: typeof intent === "string" && intent !== "" ? intent : null,
+    position: rankValueOf(item),
+    volume: numberOrNull(info?.search_volume),
+    cpc: numberOrNull(info?.cpc),
+    traffic: numberOrNull(
+      item.ranked_serp_element?.etv ?? item.ranked_serp_element?.serp_item?.etv,
+    ),
+  };
+}
+
+/** The sampled keywords that send the domain the most traffic, most valuable
+ *  first — the ordering the reference table is sorted by. Keywords with no
+ *  `etv` sort last rather than being dropped: the row is still true. */
+function topKeywordRows(items: DomainRankedKeywordItem[]): TopKeywordRow[] {
+  const rows = items.flatMap((item) => {
+    const row = toTopKeywordRow(item);
+    return row === null ? [] : [row];
+  });
+  rows.sort((a, b) => (b.traffic ?? -1) - (a.traffic ?? -1));
+  return rows.slice(0, TOP_KEYWORDS_LIMIT);
 }
 
 /** Total counted across all buckets (sum of values). */
@@ -584,6 +644,10 @@ export async function buildOverviewReportData(
 
   const tables = {
     countries: ok(countries),
+    topKeywords:
+      rankedSettled.status === "fulfilled"
+        ? ok(topKeywordRows(rankedKeywords))
+        : err<TopKeywordRow[]>([]),
   };
 
   // ---- Charts ----
@@ -649,6 +713,7 @@ export const __test = {
   rowFromLabs,
   countryLabelFor,
   bucketForKeyword,
+  topKeywordRows,
   bucketCountsFromMetrics,
   toHistoricalSeries,
   historyWindowStart,
