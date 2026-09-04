@@ -7,6 +7,7 @@ import { renderOverviewReport } from "@/server/lib/render/templates/overview";
 import type {
   BucketTrendPoint,
   OverviewReportData,
+  TopKeywordRow,
 } from "@/server/lib/render/reports/overview-report";
 import {
   renderMultiLineChart,
@@ -47,6 +48,14 @@ const OUTPUT_PATH = path.join(
   REPO_ROOT,
   ".dev/designer/overview-with-sample-data.png",
 );
+/** The parity audit's reference viewport. Captured clipped (not full-page) so
+ *  the shot answers the only question that matters for the bottom grid: does
+ *  it fit above 1231px? */
+const PARITY_VIEWPORT = { width: 1316, height: 1231 } as const;
+const PARITY_PATH = path.join(
+  REPO_ROOT,
+  ".dev/designer/overview-parity-p0-final.png",
+);
 const CHART_BENCH_PATH = path.join(
   REPO_ROOT,
   ".dev/designer/overview-keywords-area-preview.png",
@@ -60,29 +69,39 @@ async function main() {
   await ensureRendererRunning();
 
   const data = sampleOverviewData();
-  await screenshot(
-    renderOverviewReport({
-      report: "overview",
-      domain: "example-preview.test",
-      country: "es",
-      device: "desktop",
-      data,
-      flags: await loadCountryFlags(
-        data.tables.countries.source === "ok"
-          ? data.tables.countries.value.map((row) => row.countryCode)
-          : [],
-      ),
-    }),
-    OUTPUT_PATH,
-  );
-  await screenshot(chartBenchHtml(), CHART_BENCH_PATH);
+  const html = renderOverviewReport({
+    report: "overview",
+    domain: "example-preview.test",
+    country: "es",
+    device: "desktop",
+    data,
+    flags: await loadCountryFlags([
+      ...(data.tables.countries.source === "ok"
+        ? data.tables.countries.value.map((row) => row.countryCode)
+        : []),
+      "ES",
+    ]),
+  });
+  await screenshot(html, OUTPUT_PATH, {
+    width: PARITY_VIEWPORT.width,
+    fullPage: true,
+  });
+  await screenshot(html, PARITY_PATH, { ...PARITY_VIEWPORT, fullPage: false });
+  await screenshot(chartBenchHtml(), CHART_BENCH_PATH, {
+    width: 1280,
+    fullPage: true,
+  });
 }
 
-async function screenshot(html: string, outputPath: string): Promise<void> {
+async function screenshot(
+  html: string,
+  outputPath: string,
+  viewport: { width: number; height?: number; fullPage: boolean },
+): Promise<void> {
   const response = await fetch(`${RENDERER_URL}/screenshot`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ html, width: 1280, fullPage: true }),
+    body: JSON.stringify({ html, ...viewport }),
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -186,6 +205,7 @@ function sampleOverviewData(): OverviewReportData {
           },
         ],
       },
+      topKeywords: { source: "ok", value: fakeTopKeywords() },
     },
     charts: {
       trafficTrend: {
@@ -213,6 +233,53 @@ function sampleOverviewData(): OverviewReportData {
       },
     },
   };
+}
+
+/** FIXTURE — invented keywords for the "Top Organic Keywords" card, so the
+ *  bottom grid can be judged with a full table. Never served to a user. */
+function fakeTopKeywords(): TopKeywordRow[] {
+  return [
+    {
+      keyword: "preview analytics platform",
+      intent: "commercial",
+      position: 1,
+      volume: 60_500,
+      cpc: 1.58,
+      traffic: 4881.2,
+    },
+    {
+      keyword: "example preview",
+      intent: "navigational",
+      position: 1,
+      volume: 22_200,
+      cpc: 0,
+      traffic: 1790.4,
+    },
+    {
+      keyword: "how to audit a domain",
+      intent: "informational",
+      position: 3,
+      volume: 12_100,
+      cpc: 0.89,
+      traffic: 640.11,
+    },
+    {
+      keyword: "best rank tracking tool for agencies",
+      intent: "commercial",
+      position: 4,
+      volume: 9_900,
+      cpc: 4.32,
+      traffic: 388.06,
+    },
+    {
+      keyword: "buy seo report template",
+      intent: "transactional",
+      position: 6,
+      volume: 1_300,
+      cpc: 2.14,
+      traffic: 92.99,
+    },
+  ];
 }
 
 /* --------------------------- Chart bench (fake data) --------------------------- */
