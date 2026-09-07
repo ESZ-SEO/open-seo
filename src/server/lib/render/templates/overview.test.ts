@@ -441,7 +441,7 @@ describe("renderOverviewReport · template", () => {
     expect(html).not.toMatch(/\p{Regional_Indicator}/u);
   });
 
-  it("surfaces the report generation date in the header chips and the footer", () => {
+  it("surfaces the report generation date in the header chips", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 2, 14, 10, 30));
     try {
@@ -452,9 +452,14 @@ describe("renderOverviewReport · template", () => {
         year: "numeric",
       }).format(new Date(2026, 2, 14, 10, 30));
       expect(html).toContain(expectedDate);
-      expect(html).toContain("Generated:");
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("has no footer — the reference capture doesn't show one", () => {
+    const html = render();
+    expect(html).not.toContain("Data via DataForSEO");
+    expect(html).not.toContain("Generated:");
   });
 });

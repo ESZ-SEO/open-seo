@@ -172,14 +172,6 @@ const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 });
 
-const DATETIME_FMT = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
 /** Inline flag markup for a country row. Flags must be *drawn*, not typed:
  *  the emoji this used to emit depends on a colour emoji font the renderer's
  *  Chromium image doesn't ship, so it degraded to bare "ES" letterforms. The
@@ -908,7 +900,6 @@ export function renderOverviewReport({
 
   const now = new Date();
   const generatedDate = DATE_FMT.format(now);
-  const generatedDateTime = DATETIME_FMT.format(now);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1297,10 +1288,6 @@ export function renderOverviewReport({
     border-radius: 4px; font-size: 12.5px; font-weight: 600;
   }
 
-  .footer {
-    margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border);
-    font-size: 10.5px; color: var(--muted); display: flex; justify-content: space-between;
-  }
 </style>
 </head>
 <body>
@@ -1431,12 +1418,6 @@ export function renderOverviewReport({
           </div>
         </div>
       </div>
-    </div>
-
-    <div class="footer">
-      <span>Data via DataForSEO</span>
-      <span>Generated: ${escapeHtml(generatedDateTime)}</span>
-      <span>${escapeHtml(report)} · ${escapeHtml(countryCode)} · ${escapeHtml(deviceLabel)}</span>
     </div>
   </div>
 </body>
