@@ -223,7 +223,11 @@ describe("renderOverviewReport · template", () => {
       html.indexOf('class="card card-kpi card-ai"'),
       html.indexOf('class="card card-kpi card-seo"'),
     );
-    expect(aiCard).not.toMatch(/\d/);
+    // Source icons (ChatGPT/Google/Gemini) are inline SVGs and their path
+    // coordinates are legitimately full of digits — strip them before
+    // checking that no *rendered* number sneaks into the card.
+    const aiCardWithoutIcons = aiCard.replace(/<svg[\s\S]*?<\/svg>/g, "");
+    expect(aiCardWithoutIcons).not.toMatch(/\d/);
   });
 
   it("abbreviates KPI values and keeps the exact figure on the tile", () => {

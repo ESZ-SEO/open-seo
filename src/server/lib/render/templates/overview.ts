@@ -311,6 +311,14 @@ const ICONS = {
   chevron: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>`,
   device: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>`,
   sparkle: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none"><path d="M12 2.5 13.8 8 19.5 9.8 13.8 11.6 12 17.1 10.2 11.6 4.5 9.8 10.2 8z"></path><path d="M18.5 15.2 19.4 18l2.8.9-2.8.9-.9 2.8-.9-2.8-2.8-.9 2.8-.9z"></path></svg>`,
+  /* Referential marks for the AI Search row labels — identifying whose
+     product the row is about, the same way "Data via DataForSEO" names its
+     source. Not decoration, not a Semrush asset: single-colour silhouettes
+     from Simple Icons (CC0), rendered in the row's own ink via currentColor
+     rather than each brand's real palette. */
+  openai: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"></path></svg>`,
+  google: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none"><path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"></path></svg>`,
+  gemini: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"></path></svg>`,
 } as const;
 
 /* ----------------------------- SEO tiles ----------------------------- */
@@ -355,8 +363,14 @@ function renderTiles(tiles: Tile[]): string {
 
 /** The generative surfaces the reference breaks its AI metrics down by. Order
  *  is the reference's. No endpoint reports any of them today, so the rows
- *  carry the labels and the geometry and nothing else. */
-const AI_SOURCES = ["ChatGPT", "AI Overview", "AI Mode", "Gemini"] as const;
+ *  carry the labels and the geometry and nothing else. AI Overview and AI
+ *  Mode are both Google surfaces, hence the shared icon. */
+const AI_SOURCES = [
+  { name: "ChatGPT", icon: ICONS.openai },
+  { name: "AI Overview", icon: ICONS.google },
+  { name: "AI Mode", icon: ICONS.google },
+  { name: "Gemini", icon: ICONS.gemini },
+] as const;
 
 /**
  * The left third of the KPI row.
@@ -368,9 +382,9 @@ const AI_SOURCES = ["ChatGPT", "AI Overview", "AI Mode", "Gemini"] as const;
  */
 function renderAiSearchCard(): string {
   const sources = AI_SOURCES.map(
-    (name) => `
+    ({ name, icon }) => `
       <div class="ai-row">
-        <span class="ai-row-name"><span class="ai-dot"></span>${escapeHtml(name)}</span>
+        <span class="ai-row-name"><span class="ai-icon">${icon}</span>${escapeHtml(name)}</span>
         <span>${NO_SOURCE}</span>
         <span>${NO_SOURCE}</span>
       </div>`,
@@ -1077,10 +1091,8 @@ export function renderOverviewReport({
   .ai-rows { margin-top: 6px; display: flex; flex-direction: column; gap: 1px; }
   .ai-row { font-size: 12px; line-height: 15px; color: var(--text); }
   .ai-row-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-  .ai-dot {
-    width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
-    background: var(--brand-soft); box-shadow: inset 0 0 0 1px rgba(104, 104, 216, 0.35);
-  }
+  .ai-icon { display: inline-flex; flex-shrink: 0; color: var(--muted); }
+  .ai-icon svg { width: 12px; height: 12px; }
   .ai-note { margin-top: auto; padding-top: 4px; font-size: 10.5px; color: var(--muted); }
 
   /* SEO — 2 rows × 4 columns, hairline dividers between tiles. */
