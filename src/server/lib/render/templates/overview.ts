@@ -283,6 +283,12 @@ const COLORS = {
   muted: "#6b7280",
   /** Periwinkle. Links, active states, primary series — never body copy. */
   accent: "#6868d8",
+  /** Pure blue, verified against the reference's real HTML dump
+   *  (rgb(0,81,255), the market-pill active-state colour) — distinct from
+   *  the periwinkle accent. The device/date/currency filter text uses this,
+   *  not --brand: Pedro confirmed by eye that those specific controls read
+   *  blue, not purple, in the reference. */
+  filterBlue: "#0051ff",
   /** Cool lavender: selected controls (pills, tabs, segments). */
   lavender: "#e6e9fc",
   /** Warm lavender: tags and badges sitting on a white card. */
@@ -923,6 +929,7 @@ export function renderOverviewReport({
        edge rather than as a divider. */
     --control-border: #d6d8dc;
     --brand: ${COLORS.accent};
+    --filter-blue: ${COLORS.filterBlue};
     /* Two lavenders, as the audit specifies: the warm one carries tags and
        badges, the cool one marks a selected control. */
     --brand-soft: ${COLORS.lavenderWarm};
@@ -993,9 +1000,9 @@ export function renderOverviewReport({
      them. The padding is what keeps them apart now that no border does it. */
   .filter {
     display: inline-flex; align-items: center; gap: 6px; height: 26px;
-    padding: 0 3px; font-size: 12.5px; font-weight: 500; color: var(--brand);
+    padding: 0 3px; font-size: 12.5px; font-weight: 500; color: var(--filter-blue);
   }
-  .filter svg { width: 13px; height: 13px; color: var(--brand); }
+  .filter svg { width: 13px; height: 13px; color: var(--filter-blue); }
   /* The one boxed item left in the row, because it is a status and not a
      filter: it has to read as an exception to the row, not a member of it. */
   .chip--warn {
