@@ -1098,10 +1098,13 @@ export function renderOverviewReport({
   .tile-label svg { color: var(--muted); width: 13px; height: 13px; flex-shrink: 0; }
   .tile-info { display: inline-flex; color: #b7bcc4; }
   .tile-info svg { width: 12px; height: 12px; color: inherit; }
-  /* Near-black, not periwinkle: the accent marks what is interactive (links,
-     selected controls) and a wall of coloured figures is exactly the "body
-     text reads blue" the audit asked us to leave behind (VIS-01). */
-  .tile-value { font-size: 25px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--text); }
+  /* Periwinkle, not near-black: verified against the reference's real HTML
+     dump (oklch(0.53 0.157 279.2), see H7 in the original design review) —
+     KPI values ARE the accent colour in the reference, confirmed by
+     measurement, not inferred from a screenshot. VIS-01 (ee2fc10) briefly
+     switched this to --text reasoning from a screenshot read alone; reverted
+     once the ground-truth HTML measurement was checked against it. */
+  .tile-value { font-size: 25px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; color: var(--brand); }
   .tile-value--empty { color: var(--muted); font-weight: 600; }
 
   /* ---------- analytics workspace ---------- */
