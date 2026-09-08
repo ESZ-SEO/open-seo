@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function -- Domain Overview template mirrors the Semrush 2026 layout — query bar, KPI row (AI Search + SEO), analytics workspace (rail + stacked charts) and the 50/50 bottom grid. Splitting fragments the page narrative across files. */
 import type { ReportKind } from "@/server/lib/render/cache";
 import type {
+  AiSearchData,
   BucketTrendPoint,
   CountryRow,
   HistoricalKeywordBucket,
@@ -33,10 +34,11 @@ import {
  *   1. Header (~185px): domain query bar, breadcrumb, title + export, filter
  *      chips, tab strip.
  *   2. KPI row — two equal-height cards on a 1fr/2fr grid:
- *        - "AI Search": geometry only. No endpoint feeds AI visibility,
- *          mentions or cited pages, so every cell renders `—` and the card
- *          says so. Dropping the card instead would collapse the row back to
- *          the full-width SEO block the audit asked us to leave behind.
+ *        - "AI Search": mentions per generative surface, from the LLM-mentions
+ *          database. AI visibility and cited pages have no source, so those
+ *          cells render `—` and the card says so. Dropping the card instead
+ *          would collapse the row back to the full-width SEO block the audit
+ *          asked us to leave behind.
  *        - "SEO": the 8 KPIs in a 4×2 grid, values abbreviated (`1.1K`) with
  *          the exact figure on the cell's `title`.
  *   3. Analytics workspace (~505px) — one card, `22% / 78%` columns:
@@ -361,34 +363,56 @@ function renderTiles(tiles: Tile[]): string {
 
 /* ----------------------------- AI Search card ----------------------------- */
 
-/** The generative surfaces the reference breaks its AI metrics down by. Order
- *  is the reference's. No endpoint reports any of them today, so the rows
- *  carry the labels and the geometry and nothing else. AI Overview and AI
- *  Mode are both Google surfaces, hence the shared icon. */
+/** The generative surfaces the reference breaks its AI metrics down by, in the
+ *  reference's order. Only the first two are in DataForSEO's LLM-mentions
+ *  database, so the other two report `null` by construction — see
+ *  {@link AiSearchData}. AI Overview and AI Mode are both Google surfaces,
+ *  hence the shared icon. */
+/** The card says `—` for "no source", never `fmtCompact`'s "N/A". */
+function fmtAiMetric(value: number | null): string {
+  return value == null ? NO_SOURCE : fmtCompact(value);
+}
+
 const AI_SOURCES = [
-  { name: "ChatGPT", icon: ICONS.openai },
-  { name: "AI Overview", icon: ICONS.google },
-  { name: "AI Mode", icon: ICONS.google },
-  { name: "Gemini", icon: ICONS.gemini },
+  {
+    name: "ChatGPT",
+    icon: ICONS.openai,
+    mentionsOf: (ai: AiSearchData) => ai.chatGptMentions,
+  },
+  {
+    name: "AI Overview",
+    icon: ICONS.google,
+    mentionsOf: (ai: AiSearchData) => ai.aiOverviewMentions,
+  },
+  { name: "AI Mode", icon: ICONS.google, mentionsOf: () => null },
+  { name: "Gemini", icon: ICONS.gemini, mentionsOf: () => null },
 ] as const;
 
 /**
  * The left third of the KPI row.
  *
- * Every number is `—` on purpose: DataForSEO has no AI-visibility product
- * wired into this report, and the audit is explicit that the answer to a
- * missing source is to keep the geometry and say nothing rather than to invent
- * a figure or drop the card (which would take the whole 1fr/2fr row with it).
+ * Mentions come from `llm_mentions/aggregated_metrics`. AI Visibility and
+ * Cited Pages stay `—`: no DataForSEO product publishes a visibility score,
+ * and `llm_mentions/top_pages` caps its page list at 10 per surface, so the
+ * only count it can offer is a sample size that would read as a total. The
+ * audit is explicit that the answer to a missing source is to keep the
+ * geometry and say nothing rather than invent a figure or drop the card
+ * (which would take the whole 1fr/2fr row with it).
  */
-function renderAiSearchCard(): string {
+function renderAiSearchCard(ai: OverviewReportData["aiSearch"]): string {
   const sources = AI_SOURCES.map(
-    ({ name, icon }) => `
+    ({ name, icon, mentionsOf }) => `
       <div class="ai-row">
         <span class="ai-row-name"><span class="ai-icon">${icon}</span>${escapeHtml(name)}</span>
-        <span>${NO_SOURCE}</span>
+        <span>${fmtAiMetric(mentionsOf(ai.value))}</span>
         <span>${NO_SOURCE}</span>
       </div>`,
   ).join("");
+
+  const note =
+    ai.value.mentions == null
+      ? "No AI Search data source connected"
+      : "Mentions only — no other AI source";
 
   return `
     <div class="card card-kpi card-ai">
@@ -398,11 +422,11 @@ function renderAiSearchCard(): string {
         <div class="ai-head">Mentions</div>
         <div class="ai-head">Cited Pages</div>
         <div class="ai-value">${NO_SOURCE}</div>
-        <div class="ai-value">${NO_SOURCE}</div>
+        <div class="ai-value">${fmtAiMetric(ai.value.mentions)}</div>
         <div class="ai-value">${NO_SOURCE}</div>
       </div>
       <div class="ai-rows">${sources}</div>
-      <div class="ai-note">No AI Search data source connected</div>
+      <div class="ai-note">${note}</div>
     </div>`;
 }
 
@@ -737,7 +761,10 @@ function keywordsChart(charts: OverviewReportData["charts"]): ChartBlock {
   const months = trend.value.points;
   const counts = charts.keywordBuckets.value.counts;
 
-  if (trend.source === "ok" && trackedMonthCount(months) >= MIN_HISTORY_POINTS) {
+  if (
+    trend.source === "ok" &&
+    trackedMonthCount(months) >= MIN_HISTORY_POINTS
+  ) {
     const serpToday = counts.serpFeatures;
     return {
       svg: renderStackedAreaChart(bucketTrendSeries(months), {
@@ -909,7 +936,9 @@ export function renderOverviewReport({
   const countries =
     data.tables.countries.source === "ok" ? data.tables.countries.value : [];
   const topKeywords =
-    data.tables.topKeywords.source === "ok" ? data.tables.topKeywords.value : [];
+    data.tables.topKeywords.source === "ok"
+      ? data.tables.topKeywords.value
+      : [];
   const countryFlag = countryFlagIcon(countryCode, flags);
 
   const now = new Date();
@@ -1338,7 +1367,7 @@ export function renderOverviewReport({
     </div>
 
     <div class="kpi-row">
-      ${renderAiSearchCard()}
+      ${renderAiSearchCard(data.aiSearch)}
       <div class="card card-kpi card-seo">
         <div class="card-tab"><span class="badge">SEO</span></div>
         <div class="tiles">${renderTiles(tiles)}</div>

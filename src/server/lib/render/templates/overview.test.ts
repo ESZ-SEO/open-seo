@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Covers the whole Overview template contract (header, KPI cards, workspace, bottom grid) against one shared fixture; splitting would duplicate makeFixture per file. */
 import { describe, expect, it, vi } from "vitest";
 import { ES, US } from "country-flag-icons/string/3x2";
 import {
@@ -53,6 +54,14 @@ function makeFixture(): OverviewReportData {
   return {
     input: { domain: "example.com", country: "ES", countryLabel: "ES" },
     healthy: true,
+    aiSearch: {
+      value: {
+        mentions: null,
+        chatGptMentions: null,
+        aiOverviewMentions: null,
+      },
+      source: "empty",
+    },
     tiles: {
       authority: { value: 79, source: "ok" },
       authorityComposition: { rank: 80, spamPenalty: 1 },
@@ -113,6 +122,18 @@ function makeFixture(): OverviewReportData {
 
 /** The call every test makes. Only the parts a test actually varies are
  *  spelled out at the call site. */
+/** The AI card's metric cells alone: the source icons are inline SVGs whose
+ *  path coordinates are legitimately full of digits, and the note below the
+ *  rows carries an em dash of its own. */
+function aiMetricCells(html: string): string {
+  return html
+    .slice(
+      html.indexOf('class="card card-kpi card-ai"'),
+      html.indexOf('class="ai-note"'),
+    )
+    .replace(/<svg[\s\S]*?<\/svg>/g, "");
+}
+
 function render(overrides: Partial<OverviewTemplateInput> = {}): string {
   return renderOverviewReport({
     report: "overview",
@@ -211,23 +232,33 @@ describe("renderOverviewReport · template", () => {
     expect(html).toContain(">Analyze<");
   });
 
-  it("splits the KPI row into an AI Search card that claims no numbers", () => {
-    const html = render();
-    // The card exists so the 1fr/2fr row survives, but nothing feeds it: no
-    // engine row may carry a figure.
-    expect(html).toContain("AI Visibility");
-    expect(html).toContain("Cited Pages");
-    expect(html).toContain("ChatGPT");
-    expect(html).toContain("No AI Search data source connected");
-    const aiCard = html.slice(
-      html.indexOf('class="card card-kpi card-ai"'),
-      html.indexOf('class="card card-kpi card-seo"'),
+  it("fills only the AI Search cells the mentions database can back", () => {
+    const filled = aiMetricCells(
+      render({
+        data: {
+          ...makeFixture(),
+          aiSearch: {
+            source: "ok",
+            value: {
+              mentions: 1400,
+              chatGptMentions: 900,
+              aiOverviewMentions: 500,
+            },
+          },
+        },
+      }),
     );
-    // Source icons (ChatGPT/Google/Gemini) are inline SVGs and their path
-    // coordinates are legitimately full of digits — strip them before
-    // checking that no *rendered* number sneaks into the card.
-    const aiCardWithoutIcons = aiCard.replace(/<svg[\s\S]*?<\/svg>/g, "");
-    expect(aiCardWithoutIcons).not.toMatch(/\d/);
+    expect(filled).toContain("1.4K");
+    expect(filled).toContain("900");
+    expect(filled).toContain("500");
+    // AI Visibility and Cited Pages have no source at all, and AI Mode and
+    // Gemini are absent from the mentions database — 8 cells that stay `—`.
+    expect(filled.match(/—/g)).toHaveLength(8);
+
+    // With no source the card keeps its geometry and claims nothing.
+    const bare = render();
+    expect(bare).toContain("No AI Search data source connected");
+    expect(aiMetricCells(bare)).not.toMatch(/\d/);
   });
 
   it("abbreviates KPI values and keeps the exact figure on the tile", () => {

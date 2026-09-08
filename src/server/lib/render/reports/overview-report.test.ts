@@ -14,6 +14,11 @@ const overviewMock = vi.hoisted(() => vi.fn());
 const rankedMock = vi.hoisted(() => vi.fn());
 const serpCompetitorsMock = vi.hoisted(() => vi.fn());
 const historicalMock = vi.hoisted(() => vi.fn());
+const aiAggregatedMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/server/lib/dataforseo/ai", () => ({
+  fetchLlmAggregatedMetrics: aiAggregatedMock,
+}));
 
 /* eslint-disable @typescript-eslint/consistent-type-imports */
 vi.mock("@/server/lib/dataforseo/labs", async () => {
@@ -148,6 +153,24 @@ beforeEach(() => {
       path: ["dataforseo_labs", "historical_rank_overview"],
     },
   });
+
+  aiAggregatedMock.mockReset();
+  aiAggregatedMock.mockImplementation(
+    async (input: { platform: "chat_gpt" | "google" }) => ({
+      data: {
+        platform: [
+          {
+            key: input.platform,
+            mentions: input.platform === "chat_gpt" ? 900 : 500,
+          },
+        ],
+      },
+      billing: {
+        costUsd: 0.1,
+        path: ["ai_optimization", "llm_mentions", "aggregated_metrics"],
+      },
+    }),
+  );
 });
 
 afterEach(() => {
@@ -341,6 +364,78 @@ describe("tiles", () => {
     expect(data.tiles.organicKeywords.value).toBe(50);
     expect(data.tiles.paidKeywords.value).toBe(null); // paid.count not set
     expect(data.tiles.competitorsCount.value).toBe(3);
+  });
+});
+
+describe("AI Search", () => {
+  it("reads ChatGPT at US/en and AI Overview in the report's own market", async () => {
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+
+    expect(data.aiSearch.source).toBe("ok");
+    expect(data.aiSearch.value).toEqual({
+      mentions: 1400,
+      chatGptMentions: 900,
+      aiOverviewMentions: 500,
+    });
+    // ChatGPT's mentions database is US/en only, so the report's market must
+    // not be passed through for it.
+    expect(aiAggregatedMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        platform: "chat_gpt",
+        locationCode: 2840,
+        languageCode: "en",
+      }),
+    );
+    expect(aiAggregatedMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        platform: "google",
+        locationCode: 2724,
+        languageCode: "es",
+      }),
+    );
+  });
+
+  it("keeps the report healthy when the AI Optimization endpoints fail", async () => {
+    aiAggregatedMock.mockRejectedValue(new Error("no ai_optimization plan"));
+
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+
+    expect(data.aiSearch.source).toBe("error");
+    expect(data.aiSearch.value.mentions).toBe(null);
+    // A missing AI subscription must not stamp "Partial data" on a report
+    // whose Google data is intact.
+    expect(data.healthy).toBe(true);
+  });
+
+  it("keeps the surface that answered when only one platform fails", async () => {
+    aiAggregatedMock.mockImplementation(
+      async (input: { platform: "chat_gpt" | "google" }) => {
+        if (input.platform === "chat_gpt") throw new Error("chat_gpt down");
+        return {
+          data: { platform: [{ key: "google", mentions: 500 }] },
+          billing: { costUsd: 0.1, path: ["ai_optimization"] },
+        };
+      },
+    );
+
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+
+    expect(data.aiSearch.source).toBe("ok");
+    // 500, not a total silently short by ChatGPT's unknown count.
+    expect(data.aiSearch.value).toEqual({
+      mentions: 500,
+      chatGptMentions: null,
+      aiOverviewMentions: 500,
+    });
   });
 });
 

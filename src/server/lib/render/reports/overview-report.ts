@@ -1,8 +1,16 @@
 /* eslint-disable max-lines -- Single-file service: data fetchers + reducers + types exported for tests. Splitting would scatter the report contract across modules without simplifying reading. */
+import { fetchLlmAggregatedMetrics } from "@/server/lib/dataforseo/ai";
 import {
   fetchBacklinksSummary,
   type BacklinksSummaryItem,
 } from "@/server/lib/dataforseo/backlinks";
+import {
+  buildLlmTarget,
+  CHATGPT_LANGUAGE_CODE,
+  CHATGPT_LOCATION_CODE,
+  type LlmPlatform,
+} from "@/server/lib/dataforseo/shared";
+import type { LlmAggregatedTotal } from "@/server/lib/dataforseoLlmSchemas";
 import {
   fetchDomainRankOverview,
   fetchHistoricalRankOverview,
@@ -125,6 +133,27 @@ export type TopKeywordRow = {
   traffic: number | null;
 };
 
+/**
+ * The AI Search card's figures.
+ *
+ * DataForSEO's LLM-mentions database (`/v3/ai_optimization/llm_mentions/*`)
+ * indexes exactly two generative surfaces — ChatGPT and Google AI Overview —
+ * so those are the only two of the card's four rows that can carry a number.
+ * AI Mode and Gemini are not in that database at all (Gemini only appears in
+ * `llm_responses`, which answers a prompt live and reports no mention counts),
+ * and no DataForSEO product publishes a "visibility" score.
+ */
+export type AiSearchData = {
+  /** Mentions across both indexed surfaces; null when neither answered. */
+  mentions: number | null;
+  /** ChatGPT mentions. DataForSEO only indexes this surface for US/en, so it
+   *  is read at US/en whatever market the report is for — the same rule the
+   *  Brand Lookup feature applies. */
+  chatGptMentions: number | null;
+  /** Google AI Overview mentions, in the report's own market. */
+  aiOverviewMentions: number | null;
+};
+
 /** One point on the "Tráfico orgánico" historical line chart. */
 export type TrendPoint = { date: string; value: number | null };
 
@@ -156,6 +185,10 @@ export type OverviewReportData = {
   input: { domain: string; country: string; countryLabel: string };
   /** True iff every cell came back ok. False means at least one is a placeholder. */
   healthy: boolean;
+  /** The AI Search card. `empty` when the account has the AI Optimization
+   *  subscription but the domain isn't mentioned; `error` when both surface
+   *  calls failed. */
+  aiSearch: Source<AiSearchData>;
   /** 8 tiles, 2 rows × 4 columns — see `.dev/specs/semrush-2026-exact-clone-spec.md` §6. */
   tiles: {
     authority: Source<number | null>;
@@ -347,6 +380,25 @@ function buildTilesFromLabs(item: DomainMetricsItem | undefined) {
   };
 }
 
+/** Mentions for one surface out of a `llm_mentions/aggregated_metrics` total.
+ *  The endpoint returns one group element per platform; a missing element is
+ *  "not reported", not zero. */
+function platformMentions(
+  total: LlmAggregatedTotal | undefined,
+  platform: LlmPlatform,
+): number | null {
+  const group = total?.platform?.find((entry) => entry.key === platform);
+  return typeof group?.mentions === "number"
+    ? Math.round(group.mentions)
+    : null;
+}
+
+/** Total across the surfaces that answered. Two nulls stay null ("no data");
+ *  one null and one number is that number, not a total short by an unknown. */
+function sumMentions(a: number | null, b: number | null): number | null {
+  return a == null && b == null ? null : (a ?? 0) + (b ?? 0);
+}
+
 /** Country label for an ISO short label; falls back to the uppercased code. */
 function countryLabelFor(code: string): string {
   const upper = code.toUpperCase();
@@ -433,9 +485,7 @@ const TOP_KEYWORDS_LIMIT = 8;
 
 /** Reduce one ranked-keyword item to a table row. Returns null for an item
  *  with no keyword text — a nameless row is a row a reader can't act on. */
-function toTopKeywordRow(
-  item: DomainRankedKeywordItem,
-): TopKeywordRow | null {
+function toTopKeywordRow(item: DomainRankedKeywordItem): TopKeywordRow | null {
   const keyword = item.keyword_data?.keyword ?? item.keyword ?? null;
   if (keyword == null || keyword === "") return null;
   const info = item.keyword_data?.keyword_info;
@@ -486,6 +536,8 @@ export async function buildOverviewReportData(
     rankedSettled,
     serpCompetitorsSettled,
     historicalSettled,
+    aiChatGptSettled,
+    aiOverviewSettled,
   ] = await Promise.allSettled([
     fetchDomainRankOverview({
       target: input.domain,
@@ -513,6 +565,18 @@ export async function buildOverviewReportData(
       limit: SERP_COMPETITORS_LIMIT,
     }),
     getHistoricalSeries({ domain: input.domain, market }),
+    fetchLlmAggregatedMetrics({
+      target: buildLlmTarget({ type: "domain", value: input.domain }),
+      platform: "chat_gpt",
+      locationCode: CHATGPT_LOCATION_CODE,
+      languageCode: CHATGPT_LANGUAGE_CODE,
+    }),
+    fetchLlmAggregatedMetrics({
+      target: buildLlmTarget({ type: "domain", value: input.domain }),
+      platform: "google",
+      locationCode: market.locationCode,
+      languageCode: market.languageCode,
+    }),
   ]);
 
   const labsWorld: DomainMetricsItem | undefined =
@@ -539,6 +603,28 @@ export async function buildOverviewReportData(
     historicalSettled.status === "fulfilled"
       ? historicalSettled.value
       : { organicTraffic: [], paidTraffic: [], keywordBuckets: [] };
+
+  // ---- AI Search ----
+  const chatGptMentions =
+    aiChatGptSettled.status === "fulfilled"
+      ? platformMentions(aiChatGptSettled.value.data, "chat_gpt")
+      : null;
+  const aiOverviewMentions =
+    aiOverviewSettled.status === "fulfilled"
+      ? platformMentions(aiOverviewSettled.value.data, "google")
+      : null;
+  const aiSearchValue: AiSearchData = {
+    mentions: sumMentions(chatGptMentions, aiOverviewMentions),
+    chatGptMentions,
+    aiOverviewMentions,
+  };
+  const aiSearch =
+    aiChatGptSettled.status === "rejected" &&
+    aiOverviewSettled.status === "rejected"
+      ? err(aiSearchValue)
+      : aiSearchValue.mentions != null
+        ? ok(aiSearchValue)
+        : empty(aiSearchValue);
 
   // ---- Tiles ----
   const authorityScore = computeAuthorityScore(backlinksSummary);
@@ -677,6 +763,10 @@ export async function buildOverviewReportData(
       : err<{ points: BucketTrendPoint[] }>({ points: [] }),
   };
 
+  // The AI Optimization endpoints are deliberately absent here. They sit behind
+  // a separate DataForSEO subscription, so an account without it would fail
+  // them on every render and stamp "Partial data" on a report whose Google
+  // data is entirely intact. The card carries its own `—` instead.
   const healthy = [
     labsWorldSettled,
     labsCountrySettled,
@@ -693,6 +783,7 @@ export async function buildOverviewReportData(
       countryLabel: market.countryLabel,
     },
     healthy,
+    aiSearch,
     tiles,
     tables,
     charts,
@@ -713,6 +804,8 @@ export const __test = {
   rowFromLabs,
   countryLabelFor,
   bucketForKeyword,
+  platformMentions,
+  sumMentions,
   topKeywordRows,
   bucketCountsFromMetrics,
   toHistoricalSeries,

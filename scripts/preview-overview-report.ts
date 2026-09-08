@@ -181,6 +181,14 @@ function sampleOverviewData(): OverviewReportData {
       countryLabel: "ES",
     },
     healthy: true,
+    aiSearch: {
+      source: "ok",
+      value: {
+        mentions: 1_940,
+        chatGptMentions: 1_260,
+        aiOverviewMentions: 680,
+      },
+    },
     tiles: {
       authority: { value: 82, source: "ok" },
       authorityComposition: { rank: 91, spamPenalty: 2 },
@@ -223,7 +231,10 @@ function sampleOverviewData(): OverviewReportData {
           paidPoints: fakeSeries(612_000, 12, 0.6),
         },
       },
-      keywordBucketTrend: { source: "ok", value: { points: fakeBucketTrend() } },
+      keywordBucketTrend: {
+        source: "ok",
+        value: { points: fakeBucketTrend() },
+      },
       keywordBuckets: {
         source: "ok",
         value: {
