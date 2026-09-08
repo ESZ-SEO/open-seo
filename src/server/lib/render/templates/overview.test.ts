@@ -62,6 +62,10 @@ function makeFixture(): OverviewReportData {
       },
       source: "empty",
     },
+    serpDistribution: {
+      value: { organic: 400, aiOverviews: 75, otherFeatures: 25 },
+      source: "ok",
+    },
     tiles: {
       authority: { value: 79, source: "ok" },
       authorityComposition: { rank: 80, spamPenalty: 1 },
@@ -130,6 +134,14 @@ function aiMetricCells(html: string): string {
       html.indexOf('class="ai-note"'),
     )
     .replace(/<svg[\s\S]*?<\/svg>/g, "");
+}
+
+/** The SERP donut's legend rows, where the per-type percentages live. */
+function serpLegend(html: string): string {
+  return html.slice(
+    html.indexOf('class="serp-legend"'),
+    html.indexOf("</aside>"),
+  );
 }
 
 /** The call every test makes. Only the parts a test actually varies are
@@ -331,20 +343,22 @@ describe("renderOverviewReport · template", () => {
     expect(ai).toContain('class="cited-empty muted"');
   });
 
-  it("draws the SERP distribution ring empty rather than restating our filter", () => {
-    // The ranked_keywords call asks for organic items only, so a computed
-    // split would read 100% Organic no matter the domain. The legend keeps its
-    // three rows; not one of them may carry a percentage.
+  it("draws the SERP distribution ring from the three per-type totals", () => {
+    // 400 / 75 / 25 of a 500 total.
     const html = render();
     expect(html).toContain("Google SERP Positions Distribution");
-    expect(html).toContain(">Organic<");
-    expect(html).toContain(">AI Overviews<");
-    expect(html).toContain(">Other SERP Features<");
-    const legend = html.slice(
-      html.indexOf('class="serp-legend"'),
-      html.indexOf("</aside>"),
-    );
-    expect(legend).not.toMatch(/\d+(\.\d+)?%/);
+    expect(serpLegend(html)).toContain("80%");
+    expect(serpLegend(html)).toContain("15%");
+    expect(serpLegend(html)).toContain("5%");
+
+    // One missing segment withholds the whole ring: the remaining two would
+    // each be drawn larger than they are, with nothing on screen to say why.
+    const data = makeFixture();
+    data.serpDistribution = {
+      value: { organic: 400, aiOverviews: null, otherFeatures: 25 },
+      source: "empty",
+    };
+    expect(serpLegend(render({ data }))).not.toMatch(/\d+(\.\d+)?%/);
   });
 
   it("renders the historical traffic chart when the series has enough months", () => {

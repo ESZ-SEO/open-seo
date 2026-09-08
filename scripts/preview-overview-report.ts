@@ -189,6 +189,10 @@ function sampleOverviewData(): OverviewReportData {
         aiOverviewMentions: 680,
       },
     },
+    serpDistribution: {
+      source: "ok",
+      value: { organic: 312_800, aiOverviews: 41_600, otherFeatures: 18_900 },
+    },
     tiles: {
       authority: { value: 82, source: "ok" },
       authorityComposition: { rank: 91, spamPenalty: 2 },

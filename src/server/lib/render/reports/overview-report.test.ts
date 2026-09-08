@@ -189,8 +189,11 @@ describe("buildOverviewReportData — graceful degradation", () => {
   it("fans out to fetchDomainRankOverview (world + country), backlinks, ranked keywords, serp competitors, and historical", async () => {
     await buildOverviewReportData({ domain: "example.com", country: "ES" });
     expect(overviewMock).toHaveBeenCalledTimes(2);
-    expect(rankedMock).toHaveBeenCalledTimes(1);
+    // The organic sample the bucket chart reads, plus one count per SERP
+    // feature type for the rail's donut.
+    expect(rankedMock).toHaveBeenCalledTimes(3);
     expect(serpCompetitorsMock).toHaveBeenCalledTimes(1);
+    expect(aiAggregatedMock).toHaveBeenCalledTimes(2);
   });
 
   it("maps the country short label to a DataForSEO location code via resolveMarket", async () => {
@@ -364,6 +367,62 @@ describe("tiles", () => {
     expect(data.tiles.organicKeywords.value).toBe(50);
     expect(data.tiles.paidKeywords.value).toBe(null); // paid.count not set
     expect(data.tiles.competitorsCount.value).toBe(3);
+  });
+});
+
+describe("SERP distribution donut", () => {
+  /** The bucket sample plus the two feature counts, keyed by item_types so a
+   *  test can tell which request it is answering. */
+  function rankedByItemTypes(totals: Record<string, number | null>) {
+    rankedMock.mockImplementation(async (input: { itemTypes?: string[] }) => ({
+      data: { items: [], totalCount: totals[String(input.itemTypes)] ?? null },
+      billing: { costUsd: 0.02, path: ["dataforseo_labs", "ranked_keywords"] },
+    }));
+  }
+
+  it("counts each result type with its own request rather than splitting the organic sample", async () => {
+    rankedByItemTypes({
+      organic: 400,
+      ai_overview_reference: 75,
+      "featured_snippet,local_pack": 25,
+    });
+
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+
+    expect(data.serpDistribution.source).toBe("ok");
+    expect(data.serpDistribution.value).toEqual({
+      organic: 400,
+      aiOverviews: 75,
+      otherFeatures: 25,
+    });
+    // The feature requests are read for `total_count` only, so they must not
+    // pay for rows nobody looks at.
+    expect(rankedMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        itemTypes: ["ai_overview_reference"],
+        limit: 1,
+      }),
+    );
+  });
+
+  it("withholds the ring when a segment is missing", async () => {
+    rankedByItemTypes({
+      organic: 400,
+      ai_overview_reference: null,
+      "featured_snippet,local_pack": 25,
+    });
+
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+
+    // Two of three segments would inflate both, with nothing on screen to say
+    // which one is absent.
+    expect(data.serpDistribution.source).toBe("empty");
   });
 });
 

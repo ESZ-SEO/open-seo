@@ -7,6 +7,7 @@ import type {
   HistoricalKeywordBucket,
   KeywordBucket,
   OverviewReportData,
+  SerpDistribution,
   TopKeywordRow,
 } from "@/server/lib/render/reports/overview-report";
 import { KEYWORD_BUCKETS } from "@/server/lib/render/reports/overview-report";
@@ -526,43 +527,80 @@ function renderTopCitedSources(countryFlag: string): string {
 }
 
 /**
- * Google SERP Positions Distribution — how the domain's SERP appearances split
- * between plain organic results, AI Overview citations and other features.
+ * Google SERP Positions Distribution — how the domain's Google appearances
+ * split between plain organic results, AI Overview citations and the other
+ * SERP features Labs tracks.
  *
- * Rendered as an empty ring, and that is a deliberate refusal rather than a
- * gap. The report's `ranked_keywords` call asks for `item_types: ["organic"]`,
- * so a split computed from that sample is 100% Organic / 0% / 0% *by
- * construction* — a restatement of our own request filter wearing the costume
- * of a finding. A reader would take it as "this domain is never cited in AI
- * Overviews", which the data cannot support. See the handover note for the two
- * ways to get the real split, both of which cost something a template isn't
- * allowed to spend on its own.
+ * Each segment is a `total_count` from its own `ranked_keywords` request (see
+ * {@link SerpDistribution}), so the three are on the same footing. The ring
+ * only draws when all three arrived: two of three segments would silently
+ * inflate both, and the reader has no way to see which one is missing.
  *
  * The ring is drawn here rather than through `renderDonutChart` because that
  * one is a 320px chart with its own legend and a centre "Total" — this is a
  * ~100px rail ornament whose legend has to align with the rail's other rows.
  */
 const SERP_SEGMENTS = [
-  { label: "Organic", color: COLORS.accent },
-  { label: "AI Overviews", color: COLORS.magenta },
-  { label: "Other SERP Features", color: COLORS.mint },
+  {
+    label: "Organic",
+    color: COLORS.accent,
+    countOf: (d: SerpDistribution) => d.organic,
+  },
+  {
+    label: "AI Overviews",
+    color: COLORS.magenta,
+    countOf: (d: SerpDistribution) => d.aiOverviews,
+  },
+  {
+    label: "Other SERP Features",
+    color: COLORS.mint,
+    countOf: (d: SerpDistribution) => d.otherFeatures,
+  },
 ] as const;
 
-function renderSerpDistribution(): string {
+const SERP_DONUT_RADIUS = 39;
+const SERP_DONUT_CIRCUMFERENCE = 2 * Math.PI * SERP_DONUT_RADIUS;
+
+/** One arc of the ring, `length` units long, starting `start` units around
+ *  from twelve o'clock. Dash-array rather than a path: an arc that is exactly
+ *  0 or exactly the whole circle degenerates into an invisible or malformed
+ *  path, and a dashed stroke handles both without a special case. */
+function serpArc(color: string, start: number, length: number): string {
+  return `<circle cx="50" cy="50" r="${SERP_DONUT_RADIUS}" fill="none" stroke="${color}" stroke-width="13" stroke-dasharray="${length.toFixed(2)} ${(SERP_DONUT_CIRCUMFERENCE - length).toFixed(2)}" stroke-dashoffset="${(-start).toFixed(2)}" transform="rotate(-90 50 50)"></circle>`;
+}
+
+function renderSerpDistribution(
+  distribution: OverviewReportData["serpDistribution"],
+): string {
+  const counts = SERP_SEGMENTS.map((s) => s.countOf(distribution.value));
+  const total = counts.reduce<number>((acc, n) => acc + (n ?? 0), 0);
+  const drawable =
+    distribution.source === "ok" && counts.every((n) => n != null) && total > 0;
+
   const legend = SERP_SEGMENTS.map(
-    (s) => `
+    (s, i) => `
             <div class="serp-row">
               <span class="serp-key"><span class="serp-dot" style="background:${s.color}"></span>${escapeHtml(s.label)}</span>
-              <span class="num muted">${NO_SOURCE}</span>
+              <span class="num muted">${drawable ? fmtPercent((counts[i] ?? 0) / total) : NO_SOURCE}</span>
             </div>`,
   ).join("");
+
+  let consumed = 0;
+  const ring = drawable
+    ? SERP_SEGMENTS.map((s, i) => {
+        const length = ((counts[i] ?? 0) / total) * SERP_DONUT_CIRCUMFERENCE;
+        const arc = serpArc(s.color, consumed, length);
+        consumed += length;
+        return arc;
+      }).join("")
+    : `<circle cx="50" cy="50" r="${SERP_DONUT_RADIUS}" fill="none" stroke="#e9ebee" stroke-width="13"></circle>`;
 
   return `
         <div class="rail-block">
           <h3 class="rail-title">Google SERP Positions Distribution</h3>
           <div class="serp">
-            <svg class="serp-donut" viewBox="0 0 100 100" width="86" height="86" role="img" aria-label="No data">
-              <circle cx="50" cy="50" r="39" fill="none" stroke="#e9ebee" stroke-width="13"></circle>
+            <svg class="serp-donut" viewBox="0 0 100 100" width="86" height="86" role="img" aria-label="${drawable ? "Share of Google appearances by result type" : "No data"}">
+              ${ring}
             </svg>
             <div class="serp-legend">${legend}</div>
           </div>
@@ -574,6 +612,7 @@ function renderRail(
   rows: CountryRow[],
   flags: Record<string, string>,
   countryFlag: string,
+  serpDistribution: OverviewReportData["serpDistribution"],
 ): string {
   const distribution =
     mode === "ai"
@@ -603,7 +642,7 @@ function renderRail(
           ${distribution}
         </div>
         ${mode === "ai" ? renderTopCitedSources(countryFlag) : ""}
-        ${renderSerpDistribution()}
+        ${renderSerpDistribution(serpDistribution)}
       </aside>`;
 }
 
@@ -1396,7 +1435,7 @@ export function renderOverviewReport({
         </div>
       </div>
       <div class="ws-body">
-        ${renderRail(searchMode, countries, flags, countryFlag)}
+        ${renderRail(searchMode, countries, flags, countryFlag, data.serpDistribution)}
         <div class="ws-main">
           <div class="chart-block">
             <h3>Traffic</h3>

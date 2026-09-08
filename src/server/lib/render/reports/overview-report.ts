@@ -154,6 +154,23 @@ export type AiSearchData = {
   aiOverviewMentions: number | null;
 };
 
+/**
+ * The rail's "Google SERP Positions Distribution" donut — how the domain's
+ * Google appearances split between plain organic results, AI Overview
+ * citations, and the other SERP features Labs tracks.
+ *
+ * Each figure is the `total_count` of its own `ranked_keywords` request, so
+ * the three are directly comparable. Deriving them from the report's 200-row
+ * organic sample instead would restate the request filter as a finding: that
+ * call asks for `item_types: ["organic"]`, so the split it can produce is
+ * 100 / 0 / 0 whatever the domain actually does.
+ */
+export type SerpDistribution = {
+  organic: number | null;
+  aiOverviews: number | null;
+  otherFeatures: number | null;
+};
+
 /** One point on the "Tráfico orgánico" historical line chart. */
 export type TrendPoint = { date: string; value: number | null };
 
@@ -189,6 +206,9 @@ export type OverviewReportData = {
    *  subscription but the domain isn't mentioned; `error` when both surface
    *  calls failed. */
   aiSearch: Source<AiSearchData>;
+  /** The rail's SERP donut. `ok` only when all three totals arrived — a ring
+   *  drawn from two of the three overstates both of them. */
+  serpDistribution: Source<SerpDistribution>;
   /** 8 tiles, 2 rows × 4 columns — see `.dev/specs/semrush-2026-exact-clone-spec.md` §6. */
   tiles: {
     authority: Source<number | null>;
@@ -224,6 +244,9 @@ export type OverviewReportData = {
 /** Limits used across the per-domain fetches. Tuned to match E1/E2's footprint. */
 const RANKED_KEYWORDS_LIMIT = 200;
 const SERP_COMPETITORS_LIMIT = 10;
+/** The two SERP-feature requests exist for their `total_count` alone — their
+ *  rows are never read, so they ask for the smallest page Labs will serve. */
+const FEATURE_COUNT_LIMIT = 1;
 
 /* ----------------------------- Charts ----------------------------- */
 
@@ -399,6 +422,26 @@ function sumMentions(a: number | null, b: number | null): number | null {
   return a == null && b == null ? null : (a ?? 0) + (b ?? 0);
 }
 
+function aiSearchSource(
+  value: AiSearchData,
+  bothSurfacesFailed: boolean,
+): Source<AiSearchData> {
+  if (bothSurfacesFailed) return err(value);
+  return value.mentions == null ? empty(value) : ok(value);
+}
+
+/** `ok` only when all three totals arrived: a ring missing one segment draws
+ *  the other two larger than they are, and says nothing about the gap. */
+function serpDistributionSource(
+  value: SerpDistribution,
+  aFeatureCountFailed: boolean,
+): Source<SerpDistribution> {
+  if (aFeatureCountFailed) return err(value);
+  return Object.values(value).every((count) => count != null)
+    ? ok(value)
+    : empty(value);
+}
+
 /** Country label for an ISO short label; falls back to the uppercased code. */
 function countryLabelFor(code: string): string {
   const upper = code.toUpperCase();
@@ -540,6 +583,8 @@ export async function buildOverviewReportData(
     historicalSettled,
     aiChatGptSettled,
     aiOverviewSettled,
+    aiOverviewRefsSettled,
+    otherFeaturesSettled,
   ] = await Promise.allSettled([
     fetchDomainRankOverview({
       target: input.domain,
@@ -578,6 +623,20 @@ export async function buildOverviewReportData(
       platform: "google",
       locationCode: market.locationCode,
       languageCode: market.languageCode,
+    }),
+    fetchRankedKeywords({
+      target: input.domain,
+      locationCode: market.locationCode,
+      languageCode: market.languageCode,
+      limit: FEATURE_COUNT_LIMIT,
+      itemTypes: ["ai_overview_reference"],
+    }),
+    fetchRankedKeywords({
+      target: input.domain,
+      locationCode: market.locationCode,
+      languageCode: market.languageCode,
+      limit: FEATURE_COUNT_LIMIT,
+      itemTypes: ["featured_snippet", "local_pack"],
     }),
   ]);
 
@@ -620,13 +679,34 @@ export async function buildOverviewReportData(
     chatGptMentions,
     aiOverviewMentions,
   };
-  const aiSearch =
+  const aiSearch = aiSearchSource(
+    aiSearchValue,
     aiChatGptSettled.status === "rejected" &&
-    aiOverviewSettled.status === "rejected"
-      ? err(aiSearchValue)
-      : aiSearchValue.mentions != null
-        ? ok(aiSearchValue)
-        : empty(aiSearchValue);
+      aiOverviewSettled.status === "rejected",
+  );
+
+  // ---- SERP distribution ----
+  // The organic total rides along on the sample request the bucket chart
+  // already pays for; only the two feature counts cost anything extra.
+  const serpDistributionValue: SerpDistribution = {
+    organic:
+      rankedSettled.status === "fulfilled"
+        ? rankedSettled.value.data.totalCount
+        : null,
+    aiOverviews:
+      aiOverviewRefsSettled.status === "fulfilled"
+        ? aiOverviewRefsSettled.value.data.totalCount
+        : null,
+    otherFeatures:
+      otherFeaturesSettled.status === "fulfilled"
+        ? otherFeaturesSettled.value.data.totalCount
+        : null,
+  };
+  const serpDistribution = serpDistributionSource(
+    serpDistributionValue,
+    aiOverviewRefsSettled.status === "rejected" ||
+      otherFeaturesSettled.status === "rejected",
+  );
 
   // ---- Tiles ----
   const authorityScore = computeAuthorityScore(backlinksSummary);
@@ -776,6 +856,8 @@ export async function buildOverviewReportData(
     rankedSettled,
     serpCompetitorsSettled,
     historicalSettled,
+    aiOverviewRefsSettled,
+    otherFeaturesSettled,
   ].every((s) => s.status === "fulfilled");
 
   return {
@@ -786,6 +868,7 @@ export async function buildOverviewReportData(
     },
     healthy,
     aiSearch,
+    serpDistribution,
     tiles,
     tables,
     charts,
