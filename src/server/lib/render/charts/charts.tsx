@@ -540,7 +540,7 @@ export function renderBarPairChart(
  * A single full-width horizontal stacked bar with the legend above it. Used
  * by the Domain Overview (E3) report for the ranked-keyword bucket
  * distribution (`KEYWORD_BUCKETS` in `overview-report.ts`: Top 3 / 4–10 /
- * 11–20 / 21–50 / 51–100 / SERP features).
+ * 11–20 / 21–50 / 51–100 / 101+).
  *
  * The data is a proportion at one moment in time, not a series, so the bar
  * carries no axes and no grid: a lone vertical column with a y-axis inside a

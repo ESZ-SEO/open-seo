@@ -111,7 +111,7 @@ function makeFixture(): OverviewReportData {
             rank11to20: 12,
             rank21to50: 20,
             rank51to100: 30,
-            serpFeatures: 8,
+            beyond100: 8,
           },
         },
         source: "ok",
@@ -120,8 +120,6 @@ function makeFixture(): OverviewReportData {
   };
 }
 
-/** The call every test makes. Only the parts a test actually varies are
- *  spelled out at the call site. */
 /** The AI card's metric cells alone: the source icons are inline SVGs whose
  *  path coordinates are legitimately full of digits, and the note below the
  *  rows carries an em dash of its own. */
@@ -134,6 +132,8 @@ function aiMetricCells(html: string): string {
     .replace(/<svg[\s\S]*?<\/svg>/g, "");
 }
 
+/** The call every test makes. Only the parts a test actually varies are
+ *  spelled out at the call site. */
 function render(overrides: Partial<OverviewTemplateInput> = {}): string {
   return renderOverviewReport({
     report: "overview",
@@ -318,7 +318,7 @@ describe("renderOverviewReport · template", () => {
     expect(html).toContain("11–20");
     expect(html).toContain("21–50");
     expect(html).toContain("51–100");
-    expect(html).toContain("SERP features");
+    expect(html).toContain("101+");
   });
 
   it("adds Top Cited Sources in AI mode only, with no invented domains", () => {
@@ -398,10 +398,10 @@ describe("renderOverviewReport · template", () => {
     // The area plots absolute per-position counts; the bar's 200-keyword
     // sample footnote must not survive alongside it.
     expect(html).not.toContain("keywords sampled");
-    // SERP features have no monthly history, so the legend loses them and the
-    // footnote says why rather than dropping the count silently.
-    expect(html).not.toMatch(/<text[^>]*>SERP features/);
-    expect(html).toContain("8 SERP features today, excluded");
+    // Keywords past position 100 have no monthly history, so the legend loses
+    // them and the footnote says why rather than dropping the count silently.
+    expect(html).not.toMatch(/<text[^>]*>101\+/);
+    expect(html).toContain("8 past position 100 today, excluded");
   });
 
   it("keeps today's keyword bar when the history is too short", () => {
@@ -409,7 +409,7 @@ describe("renderOverviewReport · template", () => {
     data.charts.keywordBucketTrend.value.points = bucketMonths(2);
     const html = render({ data });
     expect(html).toContain("Current distribution — 82 keywords sampled");
-    expect(html).toMatch(/<text[^>]*>SERP features/);
+    expect(html).toMatch(/<text[^>]*>101\+/);
   });
 
   it("renders at least 2 SVGs (chart + stacked bar)", () => {

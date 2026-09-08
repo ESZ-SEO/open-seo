@@ -244,7 +244,7 @@ describe("buildOverviewReportData — honest degradation", () => {
 });
 
 describe("bucketing", () => {
-  it("puts rank 1..3 into top3, 4..10 into rank4to10, …, 51..100 into rank51to100, beyond 100 into serpFeatures", async () => {
+  it("puts rank 1..3 into top3, 4..10 into rank4to10, …, 51..100 into rank51to100, beyond 100 into beyond100", async () => {
     rankedMock.mockResolvedValue({
       data: {
         items: [
@@ -275,7 +275,7 @@ describe("bucketing", () => {
     expect(counts.rank11to20).toBe(2);
     expect(counts.rank21to50).toBe(2);
     expect(counts.rank51to100).toBe(2);
-    expect(counts.serpFeatures).toBe(1);
+    expect(counts.beyond100).toBe(1);
   });
 
   it("falls back to rank_absolute when rank_group is missing", async () => {
@@ -571,7 +571,7 @@ describe("historical keyword buckets", () => {
 });
 
 describe("__test helpers", () => {
-  it("bucketForKeyword falls back to serpFeatures when no rank is available", () => {
+  it("bucketForKeyword falls back to beyond100 when no rank is available", () => {
     const item = {
       keyword_data: { keyword: "kw" },
       ranked_serp_element: { serp_item: {} },
@@ -581,7 +581,7 @@ describe("__test helpers", () => {
       __test.bucketForKeyword(
         item as unknown as Parameters<typeof __test.bucketForKeyword>[0],
       ),
-    ).toBe("serpFeatures");
+    ).toBe("beyond100");
   });
 
   it("countryLabelFor maps 'WW' to 'Todo el mundo'", () => {
@@ -599,7 +599,7 @@ describe("__test helpers", () => {
     expect(counts).toHaveProperty("rank11to20");
     expect(counts).toHaveProperty("rank21to50");
     expect(counts).toHaveProperty("rank51to100");
-    expect(counts).toHaveProperty("serpFeatures");
+    expect(counts).toHaveProperty("beyond100");
   });
 
   it("totalBuckets sums across the buckets", () => {

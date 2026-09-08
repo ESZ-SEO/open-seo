@@ -36,7 +36,7 @@ import {
  * pieces unique to this view:
  *  1. Country distribution (Labs `domain_rank_overview` per location).
  *  2. Keyword distribution by bucket (Top 3 / 4–10 / 11–20 / 21–50 / 51–100 /
- *     SERP features) — bucketed by `rank_group` (organic-only), with
+ *     101+) — bucketed by `rank_group` (organic-only), with
  *     `rank_absolute` as the fallback when the API doesn't expose a `rank_group`
  *     (see E3.1 — `rank_group` was added to `rankedSerpItemSchema` for this).
  *
@@ -80,7 +80,7 @@ export type KeywordBucket =
   | "rank11to20"
   | "rank21to50"
   | "rank51to100"
-  | "serpFeatures";
+  | "beyond100";
 
 /** Labels and ordering for the buckets — kept in one place so the
  *  template and the service agree on the legend order. */
@@ -90,7 +90,7 @@ export const KEYWORD_BUCKETS: KeywordBucket[] = [
   "rank11to20",
   "rank21to50",
   "rank51to100",
-  "serpFeatures",
+  "beyond100",
 ];
 
 export const KEYWORD_BUCKET_LABELS: Record<KeywordBucket, string> = {
@@ -99,7 +99,7 @@ export const KEYWORD_BUCKET_LABELS: Record<KeywordBucket, string> = {
   rank11to20: "11–20",
   rank21to50: "21–50",
   rank51to100: "51–100",
-  serpFeatures: "Funcionalidades SERP",
+  beyond100: "Más de 100",
 };
 
 /** One row of the "Distribución por países" table. */
@@ -159,11 +159,11 @@ export type TrendPoint = { date: string; value: number | null };
 
 /**
  * Buckets that exist in the monthly history. `historical_rank_overview`
- * reports position ranges only (`pos_1` … `pos_91_100`) with no SERP-feature
- * counter, so `serpFeatures` stays a present-day-only bucket rather than
- * being back-filled with an invented number.
+ * reports position ranges only (`pos_1` … `pos_91_100`) and stops there, so
+ * `beyond100` stays a present-day-only bucket rather than being back-filled
+ * with an invented number.
  */
-export type HistoricalKeywordBucket = Exclude<KeywordBucket, "serpFeatures">;
+export type HistoricalKeywordBucket = Exclude<KeywordBucket, "beyond100">;
 
 /** One month of the ranked-keyword bucket history. */
 export type BucketTrendPoint = {
@@ -214,7 +214,7 @@ export type OverviewReportData = {
     trafficTrend: Source<{ points: TrendPoint[]; paidPoints: TrendPoint[] }>;
     /** Barra apilada "Palabras clave orgánicas" por bucket — snapshot de hoy. */
     keywordBuckets: Source<{ counts: Record<KeywordBucket, number> }>;
-    /** Los mismos buckets mes a mes (sin `serpFeatures`, que no existe en el histórico). */
+    /** Los mismos buckets mes a mes (sin `beyond100`, que no existe en el histórico). */
     keywordBucketTrend: Source<{ points: BucketTrendPoint[] }>;
   };
 };
@@ -426,16 +426,20 @@ function rowFromLabs(
 }
 
 /** Bucket a single ranked keyword by its `rank_group` (with `rank_absolute`
- *  fallback). SERP features live in their own item_types bucket so they
- *  don't get mis-counted under the rank groups.
+ *  fallback):
+ *   - Top 3   → rank <= 3
+ *   - 4–10    → 4..10
+ *   - 11–20   → 11..20
+ *   - 21–50   → 21..50
+ *   - 51–100  → 51..100
+ *   - 101+    → beyond 100, or no rank at all
  *
- *  The defaults are aligned with the buckets in the spec (A.1):
- *   - Top 3      → rank <= 3
- *   - 4–10       → 4..10
- *   - 11–20      → 11..20
- *   - 21–50      → 21..50
- *   - 51–100     → 51..100
- *   - SERP feats → item_types contains featured_snippet / ai_overview / etc.
+ *  There is no SERP-feature bucket here, and there cannot be one: the report
+ *  asks `ranked_keywords` for `item_types: ["organic"]`, so a feature can
+ *  never appear in this sample. The last bucket used to be labelled "SERP
+ *  features" and counted rank > 100 and rank-less rows — a name the request
+ *  filter made impossible to earn. The real feature split is a separate
+ *  question that needs its own request.
  */
 function rankValueOf(item: DomainRankedKeywordItem): number | null {
   const serpItem = item.ranked_serp_element?.serp_item;
@@ -451,19 +455,17 @@ function rankValueOf(item: DomainRankedKeywordItem): number | null {
 function bucketForKeyword(item: DomainRankedKeywordItem): KeywordBucket {
   const rankValue = rankValueOf(item);
 
-  // SERP features — anything in the SDK's "feature" set should never be
-  // counted as a rank bucket, that would distort the chart.
   // The Labs endpoint reports position beyond 100 only via `rank_absolute`,
-  // so a missing rank still has to be tossed into the "serpFeatures"
-  // bucket to avoid false positives.
-  if (rankValue == null) return "serpFeatures";
+  // so a rank-less row is one that placed past 100 rather than one whose
+  // position is a mystery — it belongs in the same bucket.
+  if (rankValue == null) return "beyond100";
 
   if (rankValue <= 3) return "top3";
   if (rankValue <= 10) return "rank4to10";
   if (rankValue <= 20) return "rank11to20";
   if (rankValue <= 50) return "rank21to50";
   if (rankValue <= 100) return "rank51to100";
-  return "serpFeatures";
+  return "beyond100";
 }
 
 /** Initialise a zeroed bucket map. */
@@ -474,7 +476,7 @@ function emptyBucketCounts(): Record<KeywordBucket, number> {
     rank11to20: 0,
     rank21to50: 0,
     rank51to100: 0,
-    serpFeatures: 0,
+    beyond100: 0,
   };
 }
 

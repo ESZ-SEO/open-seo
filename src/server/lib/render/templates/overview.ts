@@ -82,7 +82,7 @@ const BUCKET_LABELS: Record<KeywordBucket, string> = {
   rank11to20: "11–20",
   rank21to50: "21–50",
   rank51to100: "51–100",
-  serpFeatures: "SERP features",
+  beyond100: "101+",
 };
 
 /**
@@ -449,7 +449,7 @@ const BUCKET_COLORS: Record<KeywordBucket, string> = {
   rank11to20: COLORS.accent,
   rank21to50: "#8e92e8",
   rank51to100: "#b3b9f2",
-  serpFeatures: COLORS.mint,
+  beyond100: COLORS.mint,
 };
 
 /**
@@ -723,12 +723,12 @@ function trafficChart(
 /** Bottom-to-top stacking order, which is why the buckets run backwards from
  *  the legend order used by the distribution bar: the reference puts the
  *  fattest bucket (51–100) at the base and Top 3 as the thin band riding on
- *  top. `serpFeatures` is absent by design — the monthly history carries no
+ *  top. `beyond100` is absent by design — the monthly history carries no
  *  counter for it (see `HistoricalKeywordBucket`), and back-filling one would
  *  be inventing data. */
 function bucketTrendSeries(points: BucketTrendPoint[]): TimeSeries[] {
   return KEYWORD_BUCKETS.filter(
-    (b): b is HistoricalKeywordBucket => b !== "serpFeatures",
+    (b): b is HistoricalKeywordBucket => b !== "beyond100",
   )
     .reverse()
     .map((bucket) => ({
@@ -765,7 +765,7 @@ function keywordsChart(charts: OverviewReportData["charts"]): ChartBlock {
     trend.source === "ok" &&
     trackedMonthCount(months) >= MIN_HISTORY_POINTS
   ) {
-    const serpToday = counts.serpFeatures;
+    const beyondToday = counts.beyond100;
     return {
       svg: renderStackedAreaChart(bucketTrendSeries(months), {
         width: CHART_WIDTH,
@@ -773,8 +773,8 @@ function keywordsChart(charts: OverviewReportData["charts"]): ChartBlock {
       }),
       foot:
         `Organic keywords by position over the last ${months.length} months` +
-        (serpToday > 0
-          ? ` · ${NUMBER_FMT.format(serpToday)} SERP features today, excluded (no monthly history)`
+        (beyondToday > 0
+          ? ` · ${NUMBER_FMT.format(beyondToday)} past position 100 today, excluded (no monthly history)`
           : ""),
     };
   }

@@ -246,7 +246,7 @@ function sampleOverviewData(): OverviewReportData {
             rank11to20: 45,
             rank21to50: 52,
             rank51to100: 28,
-            serpFeatures: 15,
+            beyond100: 15,
           },
         },
       },
@@ -413,7 +413,7 @@ function fakeSeries(
 function fakeKeywordBucketSeries(): TimeSeries[] {
   return [
     {
-      label: "SERP features",
+      label: "101+",
       color: "#22c55e",
       points: fakeSeries(4_200, 1, 0.2),
     },
@@ -426,7 +426,7 @@ function fakeKeywordBucketSeries(): TimeSeries[] {
 }
 
 /** The same five buckets in the shape the service hands the template — one
- *  row per month with a count per bucket, `serpFeatures` absent because the
+ *  row per month with a count per bucket, `beyond100` absent because the
  *  monthly history has no counter for it. */
 function fakeBucketTrend(): BucketTrendPoint[] {
   const byBucket = {
