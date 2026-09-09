@@ -558,16 +558,19 @@ function topCountryRows(
   return Array.from(totals.entries())
     .sort(([, a], [, b]) => b.traffic - a.traffic)
     .slice(0, Math.max(0, options.limit))
-    .map(([code, sums]) => ({
-      countryCode: COUNTRY_BY_LOCATION_CODE.get(code) ?? String(code),
-      countryLabel: COUNTRY_BY_LOCATION_CODE.get(code) ?? String(code),
-      share:
-        options.worldTraffic != null && options.worldTraffic > 0
-          ? sums.traffic / options.worldTraffic
-          : null,
-      traffic: sums.traffic,
-      keywords: sums.keywords,
-    }));
+    .map(([code, sums]) => {
+      const shortLabel = COUNTRY_BY_LOCATION_CODE.get(code) ?? String(code);
+      return {
+        countryCode: shortLabel,
+        countryLabel: countryLabelFor(shortLabel),
+        share:
+          options.worldTraffic != null && options.worldTraffic > 0
+            ? sums.traffic / options.worldTraffic
+            : null,
+        traffic: sums.traffic,
+        keywords: sums.keywords,
+      };
+    });
 }
 
 /** Bucket a single ranked keyword by its `rank_group` (with `rank_absolute`
