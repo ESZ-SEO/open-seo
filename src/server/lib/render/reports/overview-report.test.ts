@@ -542,6 +542,74 @@ describe("AI Search", () => {
   });
 });
 
+/** One all-locations `domain_rank_overview` row: a country-language pair. */
+function localeRow(
+  locationCode: number,
+  languageCode: string,
+  organic: { etv: number; count: number },
+) {
+  return {
+    se_type: "google",
+    location_code: locationCode,
+    language_code: languageCode,
+    metrics: { organic },
+  };
+}
+
+describe("topCountryRows", () => {
+  it("reports a country once, summing its languages, biggest market first", () => {
+    const rows = __test.topCountryRows(
+      [
+        localeRow(2840, "en", { etv: 300, count: 30 }), // US
+        localeRow(2124, "en", { etv: 100, count: 10 }), // Canada, en
+        localeRow(2124, "fr", { etv: 80, count: 8 }), // Canada, fr
+      ],
+      { excludeCodes: new Set(), worldTraffic: 1000, limit: 5 },
+    );
+
+    // Canada's two locales are one row of 180, which puts it below the US.
+    expect(rows).toEqual([
+      {
+        countryCode: "US",
+        countryLabel: "US",
+        share: 0.3,
+        traffic: 300,
+        keywords: 30,
+      },
+      {
+        countryCode: "CA",
+        countryLabel: "CA",
+        share: 0.18,
+        traffic: 180,
+        keywords: 18,
+      },
+    ]);
+  });
+
+  it("drops the report's own market and locations that aren't countries", () => {
+    const rows = __test.topCountryRows(
+      [
+        localeRow(2724, "es", { etv: 900, count: 90 }), // the report's market
+        localeRow(1005395, "en", { etv: 500, count: 50 }), // a city, not a country
+        localeRow(2840, "en", { etv: 100, count: 10 }),
+      ],
+      { excludeCodes: new Set([2724]), worldTraffic: null, limit: 5 },
+    );
+
+    // The market already has its own row above; the city has no country label
+    // and would have printed as a bare location number.
+    expect(rows).toEqual([
+      {
+        countryCode: "US",
+        countryLabel: "US",
+        share: null,
+        traffic: 100,
+        keywords: 10,
+      },
+    ]);
+  });
+});
+
 describe("getHistoricalSeries", () => {
   const market = { locationCode: 2724, languageCode: "es", countryLabel: "ES" };
 

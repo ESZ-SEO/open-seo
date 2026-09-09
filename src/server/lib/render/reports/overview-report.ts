@@ -16,15 +16,18 @@ import {
 import type { LlmAggregatedTotal } from "@/server/lib/dataforseoLlmSchemas";
 import {
   fetchDomainRankOverview,
+  fetchDomainRankOverviewByLocation,
   fetchHistoricalRankOverview,
   fetchRankedKeywords,
   fetchSerpCompetitors,
   type DomainMetricsItem,
+  type DomainRankOverviewLocaleItem,
   type DomainRankOverviewMetrics,
   type DomainRankedKeywordItem,
   type HistoricalRankOverviewItem,
   type SerpCompetitorItem,
 } from "@/server/lib/dataforseo/labs";
+import { LOCATION_OPTIONS } from "@/shared/keyword-locations";
 import {
   computeAuthorityScore,
   resolveMarket,
@@ -262,6 +265,22 @@ export type OverviewReportData = {
 /** Limits used across the per-domain fetches. Tuned to match E1/E2's footprint. */
 const RANKED_KEYWORDS_LIMIT = 200;
 const SERP_COMPETITORS_LIMIT = 10;
+
+/**
+ * How many rows the rail's country table carries.
+ *
+ * At `2` — the shipped value — the table is "Todo el mundo" + the report's own
+ * market, the two rows the report has always drawn, and the extra request
+ * below is never made. Raise it and the remaining rows are the domain's
+ * biggest other markets, read from ONE `domain_rank_overview` call with no
+ * location: the price of showing every market is one request, not one request
+ * per market (see {@link fetchDomainRankOverviewByLocation}).
+ *
+ * The reference capture shows four. Whether to buy that row is a cost
+ * decision, and this constant is the whole of it — `pnpm billing:overview`
+ * prints the number it should be made with.
+ */
+const COUNTRY_ROW_LIMIT = 2;
 /** The two SERP-feature requests exist for their `total_count` alone — their
  *  rows are never read, so they ask for the smallest page Labs will serve. */
 const FEATURE_COUNT_LIMIT = 1;
@@ -490,6 +509,64 @@ function rowFromLabs(
   };
 }
 
+/** Country-level DataForSEO location codes, by code. Locations outside this
+ *  catalogue (regions, cities) can't be labelled as a country, so the country
+ *  table drops them rather than printing a bare location number. */
+const COUNTRY_BY_LOCATION_CODE = new Map(
+  LOCATION_OPTIONS.map((option) => [option.code, option.shortLabel]),
+);
+
+/**
+ * The domain's biggest markets after the ones the table already names, from a
+ * single all-locations `domain_rank_overview` response.
+ *
+ * The response carries one row per country-language pair, and DataForSEO's
+ * help center is explicit about the reduction: "Do not report a country
+ * twice. Sum the etv and count values across all rows sharing the same
+ * location_code." So a country that ranks in three languages is one row here,
+ * not three. ("How to Get Website Traffic by Country with Domain Rank
+ * Overview", dataforseo.com help center, read 2026-09-09.)
+ *
+ * `share` is scaled against the same worldwide traffic figure the existing
+ * rows use, so every row in the table is a fraction of the same denominator.
+ */
+function topCountryRows(
+  items: DomainRankOverviewLocaleItem[],
+  options: {
+    excludeCodes: ReadonlySet<number>;
+    worldTraffic: number | null;
+    limit: number;
+  },
+): CountryRow[] {
+  const totals = new Map<number, { traffic: number; keywords: number }>();
+  for (const item of items) {
+    const code = item.location_code;
+    if (typeof code !== "number") continue;
+    if (options.excludeCodes.has(code)) continue;
+    if (!COUNTRY_BY_LOCATION_CODE.has(code)) continue;
+
+    const organic = pickMetrics(item, "organic");
+    const running = totals.get(code) ?? { traffic: 0, keywords: 0 };
+    running.traffic += numberOrNull(organic?.etv) ?? 0;
+    running.keywords += numberOrNull(organic?.count) ?? 0;
+    totals.set(code, running);
+  }
+
+  return Array.from(totals.entries())
+    .sort(([, a], [, b]) => b.traffic - a.traffic)
+    .slice(0, Math.max(0, options.limit))
+    .map(([code, sums]) => ({
+      countryCode: COUNTRY_BY_LOCATION_CODE.get(code) ?? String(code),
+      countryLabel: COUNTRY_BY_LOCATION_CODE.get(code) ?? String(code),
+      share:
+        options.worldTraffic != null && options.worldTraffic > 0
+          ? sums.traffic / options.worldTraffic
+          : null,
+      traffic: sums.traffic,
+      keywords: sums.keywords,
+    }));
+}
+
 /** Bucket a single ranked keyword by its `rank_group` (with `rank_absolute`
  *  fallback):
  *   - Top 3   → rank <= 3
@@ -608,6 +685,7 @@ export async function buildOverviewReportData(
     aiCitedPagesSettled,
     aiOverviewRefsSettled,
     otherFeaturesSettled,
+    extraCountriesSettled,
   ] = await Promise.allSettled([
     fetchDomainRankOverview({
       target: input.domain,
@@ -666,6 +744,11 @@ export async function buildOverviewReportData(
       limit: FEATURE_COUNT_LIMIT,
       itemTypes: ["featured_snippet", "local_pack"],
     }),
+    // Only paid for when the table has room for a market beyond the two rows
+    // the report already draws — at `COUNTRY_ROW_LIMIT` 2 this costs nothing.
+    COUNTRY_ROW_LIMIT > 2
+      ? fetchDomainRankOverviewByLocation({ target: input.domain })
+      : Promise.resolve(null),
   ]);
 
   const labsWorld: DomainMetricsItem | undefined =
@@ -842,6 +925,16 @@ export async function buildOverviewReportData(
         ? countryTiles.organicTraffic / worldTraffic
         : null,
     ),
+    // The market the report is for is already above; asking for it again would
+    // print it twice with two different reductions behind it.
+    ...(extraCountriesSettled.status === "fulfilled" &&
+    extraCountriesSettled.value != null
+      ? topCountryRows(extraCountriesSettled.value.data, {
+          excludeCodes: new Set([market.locationCode]),
+          worldTraffic,
+          limit: COUNTRY_ROW_LIMIT - 2,
+        })
+      : []),
   ];
 
   const tables = {
@@ -923,6 +1016,7 @@ export const __test = {
   rowFromLabs,
   countryLabelFor,
   bucketForKeyword,
+  topCountryRows,
   platformMentions,
   sumMentions,
   topKeywordRows,

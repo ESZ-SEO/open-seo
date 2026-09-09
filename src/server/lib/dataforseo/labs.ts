@@ -92,6 +92,14 @@ export type DomainRankOverviewMetrics = {
   [key: string]: unknown;
 };
 
+// Fork addition (E3 Domain Overview): `domain_rank_overview` called with no
+// location/language returns one item PER COUNTRY-LANGUAGE PAIR, and each item
+// names the pair it belongs to. Same metrics block as the single-market call.
+export type DomainRankOverviewLocaleItem = DomainMetricsItem & {
+  location_code?: number | null;
+  language_code?: string | null;
+};
+
 export interface RelevantPagesItem {
   page_address?: string | null;
   metrics?: LabsMetricsBlock | null;
@@ -306,6 +314,41 @@ export async function fetchDomainRankOverview(input: {
       },
     ],
   );
+  const task = assertOk(response);
+  return {
+    data: task.result?.[0]?.items ?? [],
+    billing: buildTaskBilling(task),
+  };
+}
+
+/**
+ * Labs `domain_rank_overview` for EVERY market at once.
+ *
+ * Omitting `location_code` and `language_code` is the documented way to get a
+ * domain's traffic broken down by country — DataForSEO's help center says to
+ * "leave out `location_name`/`location_code` and `language_name`/
+ * `language_code` to get all locales at once". One request replaces one
+ * request per country, and pricing is documented there as per-request and
+ * "scales with the number of rows returned" — rows, not markets asked for.
+ *
+ * `limit` pins the endpoint's documented maximum on DataForSEO's own advice:
+ * "always set `limit` to 1000, which is the maximum", because "with the
+ * default, countries are silently dropped" — a country table missing a
+ * market it never mentions dropping is worse than an expensive one.
+ *
+ * Quotes: dataforseo.com help center, "How to Get Website Traffic by Country
+ * with Domain Rank Overview"; field tables and the example response's
+ * `"cost": 0.0101` on docs.dataforseo.com. Both read 2026-09-09; no live
+ * response has been observed in this environment.
+ */
+export async function fetchDomainRankOverviewByLocation(input: {
+  target: string;
+}): Promise<DataforseoApiResponse<DomainRankOverviewLocaleItem[]>> {
+  const response = await dataforseoPost<
+    DataforseoItemsTask<DomainRankOverviewLocaleItem>
+  >("/v3/dataforseo_labs/google/domain_rank_overview/live", [
+    { target: input.target, limit: 1000 },
+  ]);
   const task = assertOk(response);
   return {
     data: task.result?.[0]?.items ?? [],

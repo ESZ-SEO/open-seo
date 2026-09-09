@@ -6,6 +6,7 @@ import {
 import { fetchBacklinksSummary } from "@/server/lib/dataforseo/backlinks";
 import {
   fetchDomainRankOverview,
+  fetchDomainRankOverviewByLocation,
   fetchHistoricalRankOverview,
   fetchRankedKeywords,
   fetchSerpCompetitors,
@@ -32,11 +33,12 @@ await main();
  * `render/reports/overview-report.ts`: it fires the same calls with the same
  * parameters and prints each one's billed USD from the response envelope.
  *
- * It also isolates `marginalCountryUsd` — the price of one extra
- * `domain_rank_overview`, which is exactly what a fourth row in the rail's
- * country table costs. That number is the open decision on the report: the
- * reference shows four countries, the report shows two, and each extra one
- * is a recurring per-render charge.
+ * It also prices the two routes to a wider country table, the open decision on
+ * this report (the reference shows four countries, the report shows two):
+ *  - `marginalCountryUsd` — one more `domain_rank_overview`, i.e. one more row.
+ *  - `allLocationsCountryUsd` — the ONE all-locations request that returns
+ *    every market at once, however many rows the table then shows. Its price
+ *    scales with the domain's locale count, so it is measured, not derived.
  *
  * The report caches renders for 7 days (`RENDER_TTL_SECONDS.overview`), so
  * divide the total by the number of renders a domain gets in a week to reach
@@ -105,6 +107,9 @@ async function main() {
       locationCode: market.locationCode,
       languageCode: market.languageCode,
     }),
+  );
+  await record("domain_rank_overview (all locations, limit 1000)", () =>
+    fetchDomainRankOverviewByLocation({ target: domain }),
   );
   await record("backlinks_summary", () =>
     fetchBacklinksSummary({ target: domain }),
@@ -176,11 +181,18 @@ async function main() {
     }),
   );
 
+  // The all-locations call is a price probe, not part of a default render
+  // (`COUNTRY_ROW_LIMIT` is 2), so it stays out of the render total.
   const totalRawUsd = round(
-    calls.reduce((sum, call) => sum + (call.rawUsd ?? 0), 0),
+    calls
+      .filter((call) => !call.label.startsWith("domain_rank_overview (all"))
+      .reduce((sum, call) => sum + (call.rawUsd ?? 0), 0),
   );
   const countryCall = calls.find((call) =>
     call.label.startsWith("domain_rank_overview (report market)"),
+  );
+  const allLocationsCall = calls.find((call) =>
+    call.label.startsWith("domain_rank_overview (all locations"),
   );
 
   console.log(
@@ -194,6 +206,9 @@ async function main() {
           /** One more `domain_rank_overview` = one more row in the rail's
            *  country table. Null when that call failed. */
           marginalCountryUsd: countryCall?.rawUsd ?? null,
+          /** Every market in one request, whatever `COUNTRY_ROW_LIMIT` shows.
+           *  Compare against `marginalCountryUsd` × extra rows. */
+          allLocationsCountryUsd: allLocationsCall?.rawUsd ?? null,
           failedCalls: calls.filter((call) => call.error != null).length,
         },
       },
