@@ -2,6 +2,7 @@
 import {
   fetchLlmAggregatedMetrics,
   fetchLlmCitedPagesCount,
+  fetchLlmCrossAggregatedMetrics,
 } from "@/server/lib/dataforseo/ai";
 import {
   fetchBacklinksSummary,
@@ -13,7 +14,10 @@ import {
   CHATGPT_LOCATION_CODE,
   type LlmPlatform,
 } from "@/server/lib/dataforseo/shared";
-import type { LlmAggregatedTotal } from "@/server/lib/dataforseoLlmSchemas";
+import type {
+  LlmAggregatedTotal,
+  LlmCrossAggregatedItem,
+} from "@/server/lib/dataforseoLlmSchemas";
 import {
   fetchDomainRankOverview,
   fetchDomainRankOverviewByLocation,
@@ -144,30 +148,32 @@ export type TopKeywordRow = {
  *
  * DataForSEO's LLM-mentions database (`/v3/ai_optimization/llm_mentions/*`)
  * indexes exactly two generative surfaces — ChatGPT and Google AI Overview —
- * so those are the only two of the card's four rows that can carry a number.
- * AI Mode and Gemini are not in that database at all (Gemini only appears in
- * `llm_responses`, which answers a prompt live and reports no mention counts).
+ * so those are the only two of the card's four rows that can carry a mention
+ * count. AI Mode and Gemini are not in that database at all (Gemini only
+ * appears in `llm_responses`, which answers a prompt live and reports no
+ * mention counts).
  *
- * The card's third headline, **AI Visibility, is left blank as a product
- * decision, not an API limitation** — read the closing paragraph before
- * re-opening it. The whole LLM Mentions surface publishes three metrics per
- * grouping and no more:
- * `mentions`, `ai_search_volume`, and `impressions` (that last documented only
- * on the legacy `aggregated_metrics` endpoint — the newer
- * `top_mentioned_pages` field tables carry the first two alone; no page
- * describes `impressions` as deprecated or always null). Nothing there
- * expresses a visibility score, a share of voice, a percentage, or an index.
+ * There is no visibility metric published anywhere on this surface: the whole
+ * LLM Mentions API exposes three figures per grouping and no more — `mentions`,
+ * `ai_search_volume`, and `impressions` (that last documented only on the
+ * legacy `aggregated_metrics` endpoint; the newer `top_mentioned_pages` field
+ * tables carry the first two alone, and no page describes `impressions` as
+ * deprecated or always null). Nothing there is a score, a percentage, or an
+ * index.
  *
- * What the API *can* support is a share of voice against a competitor set, via
- * `llm_mentions/cross_aggregated_metrics` (renamed `multi_target_metrics`; the
- * legacy path stays supported), which compares 2..10 groups in one request —
- * and this report already holds a competitor list, from the
- * `fetchSerpCompetitors` call it pays for anyway. So the blank is not "the
- * data does not exist". It is that those are *organic SERP* competitors, and
- * making them the denominator of an *AI* share of voice is a modelling choice
- * about what the words "AI Visibility" promise the reader — a product call,
- * not a measurement. Fill it only behind a label that names the denominator
- * it used. Checked against docs.dataforseo.com on 2026-09-09.
+ * What DataForSEO *can* answer is a share of voice against a competitor set,
+ * via `llm_mentions/cross_aggregated_metrics` (renamed `multi_target_metrics`;
+ * the legacy path stays supported), which compares 2..10 groups — the target
+ * plus its competitors — in one request. `aiVisibility` below is that share:
+ * the domain's own mentions divided by the same total across itself and
+ * {@link AI_VISIBILITY_COMPETITOR_LIMIT} competitors, read from the *organic
+ * SERP* competitor list this report already holds (`fetchSerpCompetitors`,
+ * paid for anyway by the tiles/table above). Using an organic-SERP set as the
+ * denominator of an *AI* share of voice is a modelling choice, not a
+ * measurement DataForSEO hands back on its own — Pedro decided to fill the
+ * card with it (2026-09-09) rather than leave it blank; see
+ * {@link computeAiVisibility} for the reduction and null cases.
+ * Checked against docs.dataforseo.com on 2026-09-09.
  */
 export type AiSearchData = {
   /** Mentions across both indexed surfaces; null when neither answered. */
@@ -182,6 +188,12 @@ export type AiSearchData = {
    *  surfaces in one request — see {@link fetchLlmCitedPagesCount}. Null when
    *  that request failed or the endpoint reported no count. */
   citedPages: number | null;
+  /** Share of voice (0–1) against up to {@link AI_VISIBILITY_COMPETITOR_LIMIT}
+   *  organic-SERP competitors, across both indexed surfaces — see
+   *  {@link computeAiVisibility}. Null when the domain has no organic
+   *  competitors to compare against, every cross-aggregated call failed, or
+   *  none of the compared domains reported a mention. */
+  aiVisibility: number | null;
 };
 
 /**
@@ -293,6 +305,20 @@ const COUNTRY_ROW_LIMIT = 2;
 /** The two SERP-feature requests exist for their `total_count` alone — their
  *  rows are never read, so they ask for the smallest page Labs will serve. */
 const FEATURE_COUNT_LIMIT = 1;
+
+/**
+ * How many organic-SERP competitors go into the AI Visibility denominator
+ * (see {@link AiSearchData.aiVisibility}). `cross_aggregated_metrics` accepts
+ * up to 9 competitors alongside the domain (10 groups total) at no extra
+ * request cost — one call prices the same whether it carries 2 groups or 10.
+ * The choice is about the *number*'s behaviour, not its price: too few and a
+ * single competitor's swing dominates the share; too many and the tail of
+ * `fetchSerpCompetitors`' list (organic also-rans barely present in AI
+ * surfaces) dilutes it with noise. 5 keeps the set to the domain's closest
+ * organic rivals — the same list `competitorsCount` already counts — while
+ * leaving each one enough weight to move the number.
+ */
+const AI_VISIBILITY_COMPETITOR_LIMIT = 5;
 
 /* ----------------------------- Charts ----------------------------- */
 
@@ -451,9 +477,11 @@ function buildTilesFromLabs(item: DomainMetricsItem | undefined) {
 
 /** Mentions for one surface out of a `llm_mentions/aggregated_metrics` total.
  *  The endpoint returns one group element per platform; a missing element is
- *  "not reported", not zero. */
+ *  "not reported", not zero. Shape-only typing (not `LlmAggregatedTotal`
+ *  itself) so the same reducer also reads a `cross_aggregated_metrics` item,
+ *  which nests an identical `platform` array under a different key. */
 function platformMentions(
-  total: LlmAggregatedTotal | undefined,
+  total: { platform?: LlmAggregatedTotal["platform"] } | undefined,
   platform: LlmPlatform,
 ): number | null {
   const group = total?.platform?.find((entry) => entry.key === platform);
@@ -468,6 +496,124 @@ function sumMentions(a: number | null, b: number | null): number | null {
   return a == null && b == null ? null : (a ?? 0) + (b ?? 0);
 }
 
+/** One aggregation group's mentions for one platform out of a
+ *  `cross_aggregated_metrics` response — {@link platformMentions} keyed by
+ *  the group's `aggregation_key` instead of read off an implicit single
+ *  target. */
+function crossAggregatedMentions(
+  items: LlmCrossAggregatedItem[] | undefined,
+  key: string,
+  platform: LlmPlatform,
+): number | null {
+  return platformMentions(
+    items?.find((entry) => entry.key === key),
+    platform,
+  );
+}
+
+/**
+ * AI Visibility: the domain's cross-surface mentions divided by the same
+ * total across itself and its organic-SERP competitors (see
+ * {@link AI_VISIBILITY_COMPETITOR_LIMIT}).
+ *
+ * Null, never a fabricated 0% or 100%, when there is nothing to divide: no
+ * competitors to compare against, or the domain itself reported no mentions
+ * on either surface (an all-null domain figure means "unknown", and an
+ * unknown numerator cannot produce a real percentage — 0% would claim
+ * certainty the data doesn't have). A competitor with no reported mentions
+ * counts as 0 in the denominator: unlike the domain's own figure, a missing
+ * competitor entry is "this rival wasn't mentioned", not "we don't know".
+ */
+function computeAiVisibility(input: {
+  chatGpt: LlmCrossAggregatedItem[] | undefined;
+  google: LlmCrossAggregatedItem[] | undefined;
+  domainKey: string;
+  competitorKeys: string[];
+}): number | null {
+  if (input.competitorKeys.length === 0) return null;
+
+  const totalFor = (key: string): number | null =>
+    sumMentions(
+      crossAggregatedMentions(input.chatGpt, key, "chat_gpt"),
+      crossAggregatedMentions(input.google, key, "google"),
+    );
+
+  const domainTotal = totalFor(input.domainKey);
+  if (domainTotal == null) return null;
+
+  const groupTotal =
+    domainTotal +
+    input.competitorKeys.reduce((sum, key) => sum + (totalFor(key) ?? 0), 0);
+
+  return groupTotal > 0 ? domainTotal / groupTotal : null;
+}
+
+/**
+ * The AI Visibility second wave: resolve the competitor set, ask
+ * `cross_aggregated_metrics` once per indexed surface, and reduce both answers
+ * to the share of voice {@link computeAiVisibility} defines.
+ *
+ * It cannot ride the main parallel batch because its inputs come OUT of that
+ * batch — the competitor domains are `fetchSerpCompetitors`' answer. It costs
+ * two requests, one per surface, and only when a competitor exists to compare
+ * against: with none, both calls resolve to `null` without ever being sent, so
+ * a domain nobody competes with pays nothing for a figure it cannot have.
+ *
+ * The two surfaces are read exactly as Mentions reads them — ChatGPT pinned to
+ * US/en (the only locale DataForSEO indexes it for), AI Overview in the
+ * report's own market — so the share of voice and the mention count beside it
+ * on the card are answers about the same two surfaces.
+ */
+async function fetchAiVisibility(input: {
+  domain: string;
+  competitors: SerpCompetitorItem[];
+  market: { locationCode: number; languageCode: string };
+}): Promise<number | null> {
+  const competitorKeys = Array.from(
+    new Set(
+      input.competitors
+        .map((competitor) => competitor.domain)
+        .filter(
+          (domain): domain is string =>
+            typeof domain === "string" &&
+            domain.length > 0 &&
+            domain.toLowerCase() !== input.domain.toLowerCase(),
+        ),
+    ),
+  ).slice(0, AI_VISIBILITY_COMPETITOR_LIMIT);
+
+  if (competitorKeys.length === 0) return null;
+
+  const groups = [input.domain, ...competitorKeys].map((domain) => ({
+    key: domain,
+    target: buildLlmTarget({ type: "domain", value: domain }),
+  }));
+
+  const [chatGptSettled, googleSettled] = await Promise.allSettled([
+    fetchLlmCrossAggregatedMetrics({
+      groups,
+      platform: "chat_gpt",
+      locationCode: CHATGPT_LOCATION_CODE,
+      languageCode: CHATGPT_LANGUAGE_CODE,
+    }),
+    fetchLlmCrossAggregatedMetrics({
+      groups,
+      platform: "google",
+      locationCode: input.market.locationCode,
+      languageCode: input.market.languageCode,
+    }),
+  ]);
+
+  return computeAiVisibility({
+    chatGpt:
+      chatGptSettled.status === "fulfilled" ? chatGptSettled.value.data : undefined,
+    google:
+      googleSettled.status === "fulfilled" ? googleSettled.value.data : undefined,
+    domainKey: input.domain,
+    competitorKeys,
+  });
+}
+
 /** `error` only when every AI Optimization call was rejected; `empty` when they
  *  answered but the domain has no figure on any of them. */
 function aiSearchSource(
@@ -475,7 +621,9 @@ function aiSearchSource(
   everyCallFailed: boolean,
 ): Source<AiSearchData> {
   if (everyCallFailed) return err(value);
-  return value.mentions == null && value.citedPages == null
+  return value.mentions == null &&
+    value.citedPages == null &&
+    value.aiVisibility == null
     ? empty(value)
     : ok(value);
 }
@@ -801,12 +949,24 @@ export async function buildOverviewReportData(
     aiCitedPagesSettled.status === "fulfilled"
       ? aiCitedPagesSettled.value.data
       : null;
+
+  const aiVisibility = await fetchAiVisibility({
+    domain: input.domain,
+    competitors: serpCompetitors,
+    market,
+  });
+
   const aiSearchValue: AiSearchData = {
     mentions: sumMentions(chatGptMentions, aiOverviewMentions),
     chatGptMentions,
     aiOverviewMentions,
     citedPages,
+    aiVisibility,
   };
+  // Deliberately excludes the visibility calls: a domain with zero organic
+  // competitors never fires them (fulfilled `null`, not a rejection), and an
+  // account whose AI Optimization subscription is fully dead should read as
+  // `error` regardless of whether visibility happened to resolve.
   const aiSearch = aiSearchSource(
     aiSearchValue,
     [aiChatGptSettled, aiOverviewSettled, aiCitedPagesSettled].every(
@@ -984,10 +1144,11 @@ export async function buildOverviewReportData(
       : err<{ points: BucketTrendPoint[] }>({ points: [] }),
   };
 
-  // The AI Optimization endpoints are deliberately absent here. They sit behind
-  // a separate DataForSEO subscription, so an account without it would fail
-  // them on every render and stamp "Partial data" on a report whose Google
-  // data is entirely intact. The card carries its own `—` instead.
+  // The AI Optimization endpoints — mentions, cited pages, and the two AI
+  // Visibility cross-aggregated calls — are deliberately absent here. They
+  // sit behind a separate DataForSEO subscription, so an account without it
+  // would fail them on every render and stamp "Partial data" on a report
+  // whose Google data is entirely intact. The card carries its own `—` instead.
   const healthy = [
     labsWorldSettled,
     labsCountrySettled,
@@ -1031,6 +1192,8 @@ export const __test = {
   topCountryRows,
   platformMentions,
   sumMentions,
+  crossAggregatedMentions,
+  computeAiVisibility,
   topKeywordRows,
   bucketCountsFromMetrics,
   toHistoricalSeries,

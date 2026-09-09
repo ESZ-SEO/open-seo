@@ -60,6 +60,7 @@ function makeFixture(): OverviewReportData {
         chatGptMentions: null,
         aiOverviewMentions: null,
         citedPages: null,
+        aiVisibility: null,
       },
       source: "empty",
     },
@@ -245,7 +246,7 @@ describe("renderOverviewReport · template", () => {
     expect(html).toContain(">Analyze<");
   });
 
-  it("fills only the AI Search cells the mentions database can back", () => {
+  it("fills the AI Search headlines the mentions database can back", () => {
     const filled = aiMetricCells(
       render({
         data: {
@@ -257,6 +258,7 @@ describe("renderOverviewReport · template", () => {
               chatGptMentions: 900,
               aiOverviewMentions: 500,
               citedPages: 42,
+              aiVisibility: 0.31,
             },
           },
         },
@@ -266,9 +268,11 @@ describe("renderOverviewReport · template", () => {
     expect(filled).toContain("900");
     expect(filled).toContain("500");
     expect(filled).toContain("42");
-    // AI Visibility has no source, and AI Mode and Gemini are absent from the
-    // mentions database — 7 cells that stay `—`.
-    expect(filled.match(/—/g)).toHaveLength(7);
+    expect(filled).toContain("31%");
+    // AI Mode and Gemini are absent from the mentions database (2 rows x 2
+    // columns), and the per-source visibility column has no figure for the two
+    // surfaces that do report — 6 cells that stay `—`.
+    expect(filled.match(/—/g)).toHaveLength(6);
 
     // With no source the card keeps its geometry and claims nothing.
     const bare = render();

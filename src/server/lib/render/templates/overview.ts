@@ -395,13 +395,10 @@ const AI_SOURCES = [
  * Mentions come from `llm_mentions/aggregated_metrics`; Cited Pages from the
  * `total_count` of `llm_mentions/top_mentioned_pages` (the successor to
  * `top_pages`, which caps its page list at 10 and reports no total, so its
- * only count was a sample size that would have read as a total).
- *
- * AI Visibility stays `—` and is closed as unsourceable — see
- * {@link AiSearchData}, which records what the whole LLM Mentions surface
- * publishes. The audit is explicit that the answer to a missing source is to
- * keep the geometry and say nothing rather than invent a figure or drop the
- * card (which would take the whole 1fr/2fr row with it).
+ * only count was a sample size that would have read as a total). AI
+ * Visibility is a share of voice against a competitor set — see
+ * {@link AiSearchData.aiVisibility} for what it's computed against; the label
+ * itself names no denominator, by design.
  */
 function renderAiSearchCard(ai: OverviewReportData["aiSearch"]): string {
   const sources = AI_SOURCES.map(
@@ -414,9 +411,13 @@ function renderAiSearchCard(ai: OverviewReportData["aiSearch"]): string {
   ).join("");
 
   const note =
-    ai.value.mentions == null && ai.value.citedPages == null
+    ai.value.mentions == null &&
+    ai.value.citedPages == null &&
+    ai.value.aiVisibility == null
       ? "No AI Search data source connected"
-      : "No AI Visibility source";
+      : ai.value.aiVisibility == null
+        ? "No AI Visibility source"
+        : "";
 
   return `
     <div class="card card-kpi card-ai">
@@ -425,7 +426,7 @@ function renderAiSearchCard(ai: OverviewReportData["aiSearch"]): string {
         <div class="ai-head">AI Visibility</div>
         <div class="ai-head">Mentions</div>
         <div class="ai-head">Cited Pages</div>
-        <div class="ai-value">${NO_SOURCE}</div>
+        <div class="ai-value">${fmtPercent(ai.value.aiVisibility)}</div>
         <div class="ai-value">${fmtAiMetric(ai.value.mentions)}</div>
         <div class="ai-value">${fmtAiMetric(ai.value.citedPages)}</div>
       </div>

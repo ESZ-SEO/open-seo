@@ -16,10 +16,12 @@ const serpCompetitorsMock = vi.hoisted(() => vi.fn());
 const historicalMock = vi.hoisted(() => vi.fn());
 const aiAggregatedMock = vi.hoisted(() => vi.fn());
 const aiCitedPagesMock = vi.hoisted(() => vi.fn());
+const aiCrossAggregatedMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/server/lib/dataforseo/ai", () => ({
   fetchLlmAggregatedMetrics: aiAggregatedMock,
   fetchLlmCitedPagesCount: aiCitedPagesMock,
+  fetchLlmCrossAggregatedMetrics: aiCrossAggregatedMock,
 }));
 
 /* eslint-disable @typescript-eslint/consistent-type-imports */
@@ -182,6 +184,24 @@ beforeEach(() => {
       path: ["ai_optimization", "llm_mentions", "top_mentioned_pages"],
     },
   });
+
+  // One group per compared domain, keyed to the same competitors
+  // `serpCompetitorsMock` returns. 300 of a 600/1000 total => 0.6.
+  aiCrossAggregatedMock.mockReset();
+  aiCrossAggregatedMock.mockImplementation(
+    async (input: { platform: "chat_gpt" | "google" }) => ({
+      data: [
+        { key: "example.com", platform: [{ key: input.platform, mentions: 300 }] },
+        { key: "a.com", platform: [{ key: input.platform, mentions: 100 }] },
+        { key: "b.com", platform: [{ key: input.platform, mentions: 50 }] },
+        { key: "c.com", platform: [{ key: input.platform, mentions: 50 }] },
+      ],
+      billing: {
+        costUsd: 0.101,
+        path: ["ai_optimization", "llm_mentions", "cross_aggregated_metrics"],
+      },
+    }),
+  );
 });
 
 afterEach(() => {
@@ -450,6 +470,7 @@ describe("AI Search", () => {
       chatGptMentions: 900,
       aiOverviewMentions: 500,
       citedPages: 37,
+      aiVisibility: 0.6,
     });
     // ChatGPT's mentions database is US/en only, so the report's market must
     // not be passed through for it.
@@ -508,6 +529,7 @@ describe("AI Search", () => {
       chatGptMentions: null,
       aiOverviewMentions: 500,
       citedPages: 37,
+      aiVisibility: 0.6,
     });
   });
 
@@ -738,6 +760,65 @@ describe("historical keyword buckets", () => {
     });
     expect(data.charts.keywordBucketTrend.value.points).toEqual([]);
     expect(data.healthy).toBe(false);
+  });
+});
+
+type CrossItems = Parameters<typeof __test.computeAiVisibility>[0]["chatGpt"];
+
+/** One `cross_aggregated_metrics` group per domain, all on one surface. */
+const crossGroups = (mentions: Record<string, number>) =>
+  Object.entries(mentions).map(([key, n]) => ({
+    key,
+    platform: [{ key: "chat_gpt" as const, mentions: n }],
+  })) as CrossItems;
+
+describe("computeAiVisibility", () => {
+  it("divides the domain's mentions by the whole compared set", () => {
+    expect(
+      __test.computeAiVisibility({
+        chatGpt: crossGroups({ "me.com": 300, "a.com": 100 }),
+        google: undefined,
+        domainKey: "me.com",
+        competitorKeys: ["a.com"],
+      }),
+    ).toBe(0.75);
+  });
+
+  it("counts a competitor with no reported mentions as zero, not as unknown", () => {
+    // b.com is absent from the response: it wasn't mentioned, which is a real
+    // 0 in the denominator — unlike the domain's own missing figure below.
+    expect(
+      __test.computeAiVisibility({
+        chatGpt: crossGroups({ "me.com": 300, "a.com": 100 }),
+        google: undefined,
+        domainKey: "me.com",
+        competitorKeys: ["a.com", "b.com"],
+      }),
+    ).toBe(0.75);
+  });
+
+  it("returns null when the domain itself reported nothing", () => {
+    // An unknown numerator cannot make a percentage; 0% would claim a
+    // certainty the response never gave.
+    expect(
+      __test.computeAiVisibility({
+        chatGpt: crossGroups({ "a.com": 100 }),
+        google: undefined,
+        domainKey: "me.com",
+        competitorKeys: ["a.com"],
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when there is no competitor to compare against", () => {
+    expect(
+      __test.computeAiVisibility({
+        chatGpt: crossGroups({ "me.com": 300 }),
+        google: undefined,
+        domainKey: "me.com",
+        competitorKeys: [],
+      }),
+    ).toBeNull();
   });
 });
 

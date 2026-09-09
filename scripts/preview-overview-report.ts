@@ -188,6 +188,7 @@ function sampleOverviewData(): OverviewReportData {
         chatGptMentions: 1_260,
         aiOverviewMentions: 680,
         citedPages: 37,
+        aiVisibility: 0.42,
       },
     },
     serpDistribution: {
