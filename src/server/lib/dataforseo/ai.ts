@@ -233,9 +233,7 @@ export async function fetchLlmCitedPagesCount(
   );
   const task = assertOk(
     response,
-    assertOptions(
-      "/v3/ai_optimization/llm_mentions/top_mentioned_pages/live",
-    ),
+    assertOptions("/v3/ai_optimization/llm_mentions/top_mentioned_pages/live"),
   );
 
   return {

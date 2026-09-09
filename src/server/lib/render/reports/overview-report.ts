@@ -151,9 +151,12 @@ export type TopKeywordRow = {
  * The card's third headline, **AI Visibility, has no source and is closed as
  * such** — re-investigating it costs more than the finding is worth. The whole
  * LLM Mentions surface publishes three metrics per grouping and no more:
- * `mentions`, `ai_search_volume`, and `impressions` (itself deprecated,
- * documented as always `null`). Nothing there expresses a visibility score, a
- * share of voice, a percentage, or an index. The nearest thing the API can
+ * `mentions`, `ai_search_volume`, and `impressions` (that last documented only
+ * on the legacy `aggregated_metrics` endpoint — the newer
+ * `top_mentioned_pages` field tables carry the first two alone; no page
+ * describes `impressions` as deprecated or always null). Nothing there
+ * expresses a visibility score, a share of voice, a percentage, or an index.
+ * The nearest thing the API can
  * support is a share of voice computed against a competitor set via
  * `llm_mentions/cross_aggregated_metrics` — a figure this report would be
  * inventing, since it has no competitor set for the AI surfaces and the
