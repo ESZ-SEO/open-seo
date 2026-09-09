@@ -15,9 +15,11 @@ const rankedMock = vi.hoisted(() => vi.fn());
 const serpCompetitorsMock = vi.hoisted(() => vi.fn());
 const historicalMock = vi.hoisted(() => vi.fn());
 const aiAggregatedMock = vi.hoisted(() => vi.fn());
+const aiCitedPagesMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/server/lib/dataforseo/ai", () => ({
   fetchLlmAggregatedMetrics: aiAggregatedMock,
+  fetchLlmCitedPagesCount: aiCitedPagesMock,
 }));
 
 /* eslint-disable @typescript-eslint/consistent-type-imports */
@@ -171,6 +173,15 @@ beforeEach(() => {
       },
     }),
   );
+
+  aiCitedPagesMock.mockReset();
+  aiCitedPagesMock.mockResolvedValue({
+    data: 37,
+    billing: {
+      costUsd: 0.101,
+      path: ["ai_optimization", "llm_mentions", "top_mentioned_pages"],
+    },
+  });
 });
 
 afterEach(() => {
@@ -438,6 +449,7 @@ describe("AI Search", () => {
       mentions: 1400,
       chatGptMentions: 900,
       aiOverviewMentions: 500,
+      citedPages: 37,
     });
     // ChatGPT's mentions database is US/en only, so the report's market must
     // not be passed through for it.
@@ -459,6 +471,7 @@ describe("AI Search", () => {
 
   it("keeps the report healthy when the AI Optimization endpoints fail", async () => {
     aiAggregatedMock.mockRejectedValue(new Error("no ai_optimization plan"));
+    aiCitedPagesMock.mockRejectedValue(new Error("no ai_optimization plan"));
 
     const data = await buildOverviewReportData({
       domain: "example.com",
@@ -494,7 +507,38 @@ describe("AI Search", () => {
       mentions: 500,
       chatGptMentions: null,
       aiOverviewMentions: 500,
+      citedPages: 37,
     });
+  });
+
+  it("counts cited pages once across both surfaces, not once per platform", async () => {
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+
+    expect(data.aiSearch.value.citedPages).toBe(37);
+    // `platform` is omitted on purpose: the endpoint then answers for both
+    // surfaces at once, and a page cited on both is one page. Two per-platform
+    // counts could not be added without double-counting it.
+    expect(aiCitedPagesMock).toHaveBeenCalledTimes(1);
+    expect(aiCitedPagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ locationCode: 2724, languageCode: "es" }),
+    );
+  });
+
+  it("keeps Mentions when only the cited-pages request fails", async () => {
+    aiCitedPagesMock.mockRejectedValue(new Error("no ai_optimization plan"));
+
+    const data = await buildOverviewReportData({
+      domain: "example.com",
+      country: "ES",
+    });
+
+    expect(data.aiSearch.source).toBe("ok");
+    expect(data.aiSearch.value.mentions).toBe(1400);
+    expect(data.aiSearch.value.citedPages).toBe(null);
+    expect(data.healthy).toBe(true);
   });
 });
 

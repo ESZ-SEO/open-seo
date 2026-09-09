@@ -59,6 +59,7 @@ function makeFixture(): OverviewReportData {
         mentions: null,
         chatGptMentions: null,
         aiOverviewMentions: null,
+        citedPages: null,
       },
       source: "empty",
     },
@@ -255,6 +256,7 @@ describe("renderOverviewReport · template", () => {
               mentions: 1400,
               chatGptMentions: 900,
               aiOverviewMentions: 500,
+              citedPages: 42,
             },
           },
         },
@@ -263,9 +265,10 @@ describe("renderOverviewReport · template", () => {
     expect(filled).toContain("1.4K");
     expect(filled).toContain("900");
     expect(filled).toContain("500");
-    // AI Visibility and Cited Pages have no source at all, and AI Mode and
-    // Gemini are absent from the mentions database — 8 cells that stay `—`.
-    expect(filled.match(/—/g)).toHaveLength(8);
+    expect(filled).toContain("42");
+    // AI Visibility has no source, and AI Mode and Gemini are absent from the
+    // mentions database — 7 cells that stay `—`.
+    expect(filled.match(/—/g)).toHaveLength(7);
 
     // With no source the card keeps its geometry and claims nothing.
     const bare = render();

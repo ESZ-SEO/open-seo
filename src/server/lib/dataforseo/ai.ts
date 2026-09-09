@@ -19,6 +19,7 @@ import {
   assertOk,
   buildTaskBilling,
   isRecord,
+  parseTaskTotalCount,
   type DataforseoApiResponse,
   type DataforseoTaskLike,
 } from "@/server/lib/dataforseo/envelope";
@@ -181,6 +182,66 @@ export async function fetchLlmTopPages(
     );
   }
   return { data: items.data, billing: buildTaskBilling(task) };
+}
+
+// ---------------------------------------------------------------------------
+// LLM Mentions Top Mentioned Pages — count only
+// ---------------------------------------------------------------------------
+
+type LlmCitedPagesCountInput = {
+  target: LlmTarget;
+  locationCode: number;
+  languageCode: string;
+};
+
+/**
+ * How many of the target's pages LLM answers cite.
+ *
+ * Reads `total_count` — "total amount of results relevant the request" — off
+ * `/ai_optimization/llm_mentions/top_mentioned_pages/live`, whose results are
+ * pages: each item's `key` is documented as the "URL of a found page", and
+ * `links_scope` defaults to `sources`, i.e. the links an answer cited.
+ * `limit: 1` because the rows are never read; the count is the whole answer.
+ *
+ * `platform` is omitted deliberately. This endpoint returns both indexed
+ * surfaces when it is absent ("if unspecified, data is returned for both
+ * platforms"), so one request covers ChatGPT and Google AI Overview together —
+ * and a page cited on both is one page, which two per-platform counts could
+ * not add up without double-counting it.
+ *
+ * {@link fetchLlmTopPages} cannot answer this: the older `top_pages/live`
+ * reports a `total` + `items` pair with no `total_count` and caps `items` at
+ * 10, so the only figure it can offer is a sample size.
+ *
+ * Field semantics are from docs.dataforseo.com (read 2026-09-09); no live
+ * response has been observed — this environment has no DataForSEO credentials.
+ */
+export async function fetchLlmCitedPagesCount(
+  input: LlmCitedPagesCountInput,
+): Promise<DataforseoApiResponse<number | null>> {
+  const response = await dataforseoPost(
+    "/v3/ai_optimization/llm_mentions/top_mentioned_pages/live",
+    [
+      {
+        target: targetList(input.target),
+        location_code: input.locationCode,
+        language_code: input.languageCode,
+        limit: 1,
+      },
+    ],
+    { classify: classifyAiSearchError },
+  );
+  const task = assertOk(
+    response,
+    assertOptions(
+      "/v3/ai_optimization/llm_mentions/top_mentioned_pages/live",
+    ),
+  );
+
+  return {
+    data: parseTaskTotalCount(task),
+    billing: buildTaskBilling(task),
+  };
 }
 
 // ---------------------------------------------------------------------------

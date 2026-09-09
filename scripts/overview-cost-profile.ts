@@ -1,5 +1,8 @@
 import process from "node:process";
-import { fetchLlmAggregatedMetrics } from "@/server/lib/dataforseo/ai";
+import {
+  fetchLlmAggregatedMetrics,
+  fetchLlmCitedPagesCount,
+} from "@/server/lib/dataforseo/ai";
 import { fetchBacklinksSummary } from "@/server/lib/dataforseo/backlinks";
 import {
   fetchDomainRankOverview,
@@ -143,6 +146,13 @@ async function main() {
     fetchLlmAggregatedMetrics({
       target: llmTarget,
       platform: "google",
+      locationCode: market.locationCode,
+      languageCode: market.languageCode,
+    }),
+  );
+  await record("llm_mentions/top_mentioned_pages (cited pages count)", () =>
+    fetchLlmCitedPagesCount({
+      target: llmTarget,
       locationCode: market.locationCode,
       languageCode: market.languageCode,
     }),

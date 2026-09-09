@@ -1,5 +1,8 @@
 /* eslint-disable max-lines -- Single-file service: data fetchers + reducers + types exported for tests. Splitting would scatter the report contract across modules without simplifying reading. */
-import { fetchLlmAggregatedMetrics } from "@/server/lib/dataforseo/ai";
+import {
+  fetchLlmAggregatedMetrics,
+  fetchLlmCitedPagesCount,
+} from "@/server/lib/dataforseo/ai";
 import {
   fetchBacklinksSummary,
   type BacklinksSummaryItem,
@@ -140,8 +143,19 @@ export type TopKeywordRow = {
  * indexes exactly two generative surfaces — ChatGPT and Google AI Overview —
  * so those are the only two of the card's four rows that can carry a number.
  * AI Mode and Gemini are not in that database at all (Gemini only appears in
- * `llm_responses`, which answers a prompt live and reports no mention counts),
- * and no DataForSEO product publishes a "visibility" score.
+ * `llm_responses`, which answers a prompt live and reports no mention counts).
+ *
+ * The card's third headline, **AI Visibility, has no source and is closed as
+ * such** — re-investigating it costs more than the finding is worth. The whole
+ * LLM Mentions surface publishes three metrics per grouping and no more:
+ * `mentions`, `ai_search_volume`, and `impressions` (itself deprecated,
+ * documented as always `null`). Nothing there expresses a visibility score, a
+ * share of voice, a percentage, or an index. The nearest thing the API can
+ * support is a share of voice computed against a competitor set via
+ * `llm_mentions/cross_aggregated_metrics` — a figure this report would be
+ * inventing, since it has no competitor set for the AI surfaces and the
+ * denominator would be a choice rather than a measurement. Checked against
+ * docs.dataforseo.com on 2026-09-09.
  */
 export type AiSearchData = {
   /** Mentions across both indexed surfaces; null when neither answered. */
@@ -152,6 +166,10 @@ export type AiSearchData = {
   chatGptMentions: number | null;
   /** Google AI Overview mentions, in the report's own market. */
   aiOverviewMentions: number | null;
+  /** Distinct pages of the domain that LLM answers cite, across both indexed
+   *  surfaces in one request — see {@link fetchLlmCitedPagesCount}. Null when
+   *  that request failed or the endpoint reported no count. */
+  citedPages: number | null;
 };
 
 /**
@@ -422,12 +440,16 @@ function sumMentions(a: number | null, b: number | null): number | null {
   return a == null && b == null ? null : (a ?? 0) + (b ?? 0);
 }
 
+/** `error` only when every AI Optimization call was rejected; `empty` when they
+ *  answered but the domain has no figure on any of them. */
 function aiSearchSource(
   value: AiSearchData,
-  bothSurfacesFailed: boolean,
+  everyCallFailed: boolean,
 ): Source<AiSearchData> {
-  if (bothSurfacesFailed) return err(value);
-  return value.mentions == null ? empty(value) : ok(value);
+  if (everyCallFailed) return err(value);
+  return value.mentions == null && value.citedPages == null
+    ? empty(value)
+    : ok(value);
 }
 
 /** `ok` only when all three totals arrived: a ring missing one segment draws
@@ -583,6 +605,7 @@ export async function buildOverviewReportData(
     historicalSettled,
     aiChatGptSettled,
     aiOverviewSettled,
+    aiCitedPagesSettled,
     aiOverviewRefsSettled,
     otherFeaturesSettled,
   ] = await Promise.allSettled([
@@ -621,6 +644,11 @@ export async function buildOverviewReportData(
     fetchLlmAggregatedMetrics({
       target: buildLlmTarget({ type: "domain", value: input.domain }),
       platform: "google",
+      locationCode: market.locationCode,
+      languageCode: market.languageCode,
+    }),
+    fetchLlmCitedPagesCount({
+      target: buildLlmTarget({ type: "domain", value: input.domain }),
       locationCode: market.locationCode,
       languageCode: market.languageCode,
     }),
@@ -674,15 +702,21 @@ export async function buildOverviewReportData(
     aiOverviewSettled.status === "fulfilled"
       ? platformMentions(aiOverviewSettled.value.data, "google")
       : null;
+  const citedPages =
+    aiCitedPagesSettled.status === "fulfilled"
+      ? aiCitedPagesSettled.value.data
+      : null;
   const aiSearchValue: AiSearchData = {
     mentions: sumMentions(chatGptMentions, aiOverviewMentions),
     chatGptMentions,
     aiOverviewMentions,
+    citedPages,
   };
   const aiSearch = aiSearchSource(
     aiSearchValue,
-    aiChatGptSettled.status === "rejected" &&
-      aiOverviewSettled.status === "rejected",
+    [aiChatGptSettled, aiOverviewSettled, aiCitedPagesSettled].every(
+      (settled) => settled.status === "rejected",
+    ),
   );
 
   // ---- SERP distribution ----
