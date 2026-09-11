@@ -95,6 +95,19 @@ function sourceFor<T>(fulfilled: boolean, hasValue: boolean, value: T): Source<T
   return hasValue ? ok(value) : empty(value);
 }
 
+/**
+ * `sourceFor` specialised for the common case of a nullable numeric field
+ * plucked straight off the summary response — used by `backlinks`,
+ * `referringDomains`, `referringPages` and `brokenBacklinks`, which all
+ * share the exact same ok/empty/err precedence.
+ */
+function summaryNumberSource(
+  fulfilled: boolean,
+  value: number | null | undefined,
+): Source<number | null> {
+  return sourceFor(fulfilled, value != null, value ?? null);
+}
+
 /** Convenience: pick the value out of a `Source` regardless of its variant. */
 function unwrap<T>(s: Source<T>): T {
   return s.value;
@@ -147,6 +160,15 @@ export type BacklinksReportData = {
      * endpoint exists.
      */
     outboundDomains: Source<number | null>;
+    /**
+     * Honest, sourced alternative to `monthlyVisits`/`outboundDomains` for the
+     * 6-cell KPI strip: `summary.referring_pages` and `summary.broken_backlinks`
+     * are already fetched. Which pair of six the template actually shows is a
+     * product call Pedro hasn't made yet — exposing both pairs here means
+     * whichever way that goes, the data side is already done.
+     */
+    referringPages: Source<number | null>;
+    brokenBacklinks: Source<number | null>;
     toxicity: Source<number | null>;
     /**
      * Fractional change across the history window (-0.03 = -3%), derived
@@ -682,28 +704,31 @@ export async function buildBacklinksReportData(
         ? Math.min(25, Math.round(summary.backlinks_spam_score * 0.25))
         : 0,
     },
-    referringDomains:
-      summarySettled.status === "fulfilled" && summary.referring_domains != null
-        ? ok(summary.referring_domains)
-        : summarySettled.status === "fulfilled"
-          ? empty<number | null>(null)
-          : err<number | null>(null),
-    backlinks:
-      summarySettled.status === "fulfilled" && summary.backlinks != null
-        ? ok(summary.backlinks)
-        : summarySettled.status === "fulfilled"
-          ? empty<number | null>(null)
-          : err<number | null>(null),
+    referringDomains: summaryNumberSource(
+      summarySettled.status === "fulfilled",
+      summary.referring_domains,
+    ),
+    backlinks: summaryNumberSource(
+      summarySettled.status === "fulfilled",
+      summary.backlinks,
+    ),
     // No DataForSEO endpoint exposes this — see the field's JSDoc on the type.
     monthlyVisits: empty<number | null>(null),
-    organicTraffic:
-      labsSettled.status === "fulfilled"
-        ? etv != null
-          ? ok(etv)
-          : empty<number | null>(null)
-        : err<number | null>(null),
+    organicTraffic: sourceFor(
+      labsSettled.status === "fulfilled",
+      etv != null,
+      etv,
+    ),
     // No DataForSEO endpoint exposes this — see the field's JSDoc on the type.
     outboundDomains: empty<number | null>(null),
+    referringPages: summaryNumberSource(
+      summarySettled.status === "fulfilled",
+      summary.referring_pages,
+    ),
+    brokenBacklinks: summaryNumberSource(
+      summarySettled.status === "fulfilled",
+      summary.broken_backlinks,
+    ),
     toxicity: (() => {
       const toxicity = summary.info?.target_spam_score ?? null;
       return toxicity != null ? ok(toxicity) : empty<number | null>(null);
@@ -831,5 +856,6 @@ export const __test = {
   empty,
   err,
   sourceFor,
+  summaryNumberSource,
   unwrap,
 };

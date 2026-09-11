@@ -131,6 +131,33 @@ describe("backlinks-report · helpers", () => {
     });
   });
 
+  // `sourceFor` is the exact wiring used for the `referringPages` and
+  // `brokenBacklinks` tiles (both `summary.referring_pages` /
+  // `summary.broken_backlinks`, resolved the same way `backlinks` and
+  // `referringDomains` already are): ok when the summary call succeeded and
+  // the field is present, empty when it succeeded without the field, error
+  // when the call itself failed.
+  describe("sourceFor", () => {
+    it("resolves ok when the call succeeded and the field is present", () => {
+      expect(__test.sourceFor(true, true, 456)).toEqual({
+        value: 456,
+        source: "ok",
+      });
+    });
+    it("resolves empty when the call succeeded but the field is missing", () => {
+      expect(__test.sourceFor(true, false, null)).toEqual({
+        value: null,
+        source: "empty",
+      });
+    });
+    it("resolves error when the call itself failed", () => {
+      expect(__test.sourceFor(false, false, null)).toEqual({
+        value: null,
+        source: "error",
+      });
+    });
+  });
+
   describe("buildNetworkGraph", () => {
     it("centres on target and lays satellites around it deterministically", () => {
       const result = __test.buildNetworkGraph("example.com", [
@@ -254,6 +281,8 @@ describe("backlinks-report · BacklinksReportData shape", () => {
         monthlyVisits: { value: null, source: "empty" },
         organicTraffic: { value: 5678, source: "ok" },
         outboundDomains: { value: null, source: "empty" },
+        referringPages: { value: 456, source: "ok" },
+        brokenBacklinks: { value: 3, source: "ok" },
         toxicity: { value: 12, source: "ok" },
         deltas: { referringDomains: 0.05, backlinks: null },
       },

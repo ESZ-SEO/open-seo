@@ -47,12 +47,29 @@ const REPO_ROOT = path.resolve(
 const RENDERER_DIR = path.join(REPO_ROOT, "renderer");
 const RENDERER_URL = process.env.RENDERER_URL ?? "http://localhost:3100";
 const DEGRADED = process.argv.includes("--degraded");
+/** Render the strip with the six metrics we can actually source, instead of
+ *  the reference's six (two of which DataForSEO does not expose and which
+ *  therefore render `n/a` against live data). Lets the two candidate strips be
+ *  compared as images rather than as descriptions. */
+const ALT_KPI = process.argv.includes("--alt-kpi");
 const OUTPUT_PATH = path.join(
   REPO_ROOT,
   DEGRADED
     ? ".dev/designer/backlinks-degraded.png"
-    : ".dev/designer/backlinks-with-sample-data.png",
+    : ALT_KPI
+      ? ".dev/designer/backlinks-alt-kpi.png"
+      : ".dev/designer/backlinks-with-sample-data.png",
 );
+/** The sourced alternative to `KPI_CELLS`, swapping the two cells that have no
+ *  upstream source for the two that do. */
+const ALT_KPI_CELLS = [
+  "referringDomains",
+  "backlinks",
+  "referringPages",
+  "organicTraffic",
+  "brokenBacklinks",
+  "toxicity",
+] as const;
 /** The renderer's screenshot width, which the template is written against. */
 const VIEWPORT_WIDTH = 1280;
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -68,6 +85,7 @@ async function main() {
     country: "ES",
     device: "desktop",
     data: DEGRADED ? degrade(data) : data,
+    ...(ALT_KPI ? { kpiCells: ALT_KPI_CELLS } : {}),
   });
   await screenshot(html, OUTPUT_PATH, {
     width: VIEWPORT_WIDTH,
@@ -152,6 +170,8 @@ function degrade(data: BacklinksReportData): BacklinksReportData {
       monthlyVisits: { source: "empty", value: null },
       organicTraffic: { source: "error", value: null },
       outboundDomains: { source: "empty", value: null },
+      referringPages: { source: "error", value: null },
+      brokenBacklinks: { source: "error", value: null },
       toxicity: { source: "error", value: null },
       deltas: { referringDomains: null, backlinks: null },
     },
@@ -277,6 +297,12 @@ function sampleBacklinksData(): BacklinksReportData {
       monthlyVisits: { value: 858_000, source: "ok" },
       organicTraffic: { value: 3_100_000, source: "ok" },
       outboundDomains: { value: 2_500, source: "ok" },
+      /* The sourced alternatives to the two cells above, populated so the
+         preview renders fully whichever six `KPI_CELLS` names. Kept in
+         proportion with the rest: more pages than domains, far fewer than
+         total backlinks, and broken links a small slice of the profile. */
+      referringPages: { value: 412_000, source: "ok" },
+      brokenBacklinks: { value: 96_400, source: "ok" },
       toxicity: { value: 14, source: "ok" },
       deltas: { referringDomains: -0.03, backlinks: -0.08 },
     },

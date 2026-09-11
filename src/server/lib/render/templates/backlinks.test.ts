@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { renderBacklinksReport } from "@/server/lib/render/templates/backlinks";
+import {
+  renderBacklinksReport,
+  type KpiKey,
+} from "@/server/lib/render/templates/backlinks";
 import type { BacklinksReportData } from "@/server/lib/render/reports/backlinks-report";
 
 /**
@@ -21,6 +24,9 @@ function makeFixture(): BacklinksReportData {
       monthlyVisits: { value: null, source: "empty" },
       organicTraffic: { value: 184_200, source: "ok" },
       outboundDomains: { value: null, source: "empty" },
+      // The sourced pair that could replace the two above.
+      referringPages: { value: 18_400, source: "ok" },
+      brokenBacklinks: { value: 3_120, source: "ok" },
       toxicity: { value: 14, source: "ok" },
       deltas: { referringDomains: -0.03, backlinks: 0.08 },
     },
@@ -161,18 +167,31 @@ function authorityBuckets() {
   }));
 }
 
-function render(data: BacklinksReportData, domain = "example.com"): string {
+function render(
+  data: BacklinksReportData,
+  opts: { domain?: string; kpiCells?: readonly KpiKey[] } = {},
+): string {
   return renderBacklinksReport({
     report: "backlinks",
-    domain,
+    domain: opts.domain ?? "example.com",
     country: "ES",
     device: "desktop",
     data,
+    ...(opts.kpiCells === undefined ? {} : { kpiCells: opts.kpiCells }),
   });
 }
 
 function countMatches(html: string, pattern: RegExp): number {
   return (html.match(pattern) ?? []).length;
+}
+
+/** Just the KPI strip. Several of its labels also appear as tab labels in the
+ *  shell above it, so a page-wide assertion would match the wrong element. */
+function kpiStrip(html: string): string {
+  return html.slice(
+    html.indexOf('class="card kpis"'),
+    html.indexOf('class="grid-3"'),
+  );
 }
 
 describe("renderBacklinksReport · template", () => {
@@ -194,7 +213,9 @@ describe("renderBacklinksReport · template", () => {
   });
 
   it("escapes the user-controlled domain", () => {
-    const html = render(makeFixture(), "<script>alert(1)</script>.evil.com");
+    const html = render(makeFixture(), {
+      domain: "<script>alert(1)</script>.evil.com",
+    });
 
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
@@ -213,8 +234,39 @@ describe("renderBacklinksReport · template", () => {
     ]) {
       expect(html).toContain(label);
     }
-    expect(countMatches(html, /class="kpi"/g)).toBe(6);
-    expect(countMatches(html, /kpi-value kpi-value--empty/g)).toBe(2);
+    const strip = kpiStrip(html);
+    expect(countMatches(strip, /class="kpi"/g)).toBe(6);
+    expect(countMatches(strip, /kpi-value kpi-value--empty/g)).toBe(2);
+  });
+
+  it("renders an alternative KPI set, in order, with every cell sourced", () => {
+    // The swap the product call would make: the two cells DataForSEO has no
+    // endpoint for, replaced by the two it does. Proving it here is the
+    // point of the refactor — otherwise nobody knows the alternative works
+    // until the day they need it.
+    const cells: readonly KpiKey[] = [
+      "referringDomains",
+      "backlinks",
+      "referringPages",
+      "organicTraffic",
+      "brokenBacklinks",
+      "toxicity",
+    ];
+    // Scoped to the strip: "Outbound Domains" is also a tab label up in the
+    // shell, so asserting its absence page-wide would test the wrong thing.
+    const strip = kpiStrip(render(makeFixture(), { kpiCells: cells }));
+
+    expect(countMatches(strip, /class="kpi"/g)).toBe(6);
+    // Not one n/a left: every cell in this set has a real source.
+    expect(countMatches(strip, /kpi-value kpi-value--empty/g)).toBe(0);
+    expect(strip).toContain("Referring Pages");
+    expect(strip).toContain("Broken Backlinks");
+    expect(strip).not.toContain("Monthly Visits");
+    expect(strip).not.toContain("Outbound Domains");
+    // Order follows the list, not the payload.
+    expect(strip.indexOf("Referring Pages")).toBeLessThan(
+      strip.indexOf("Broken Backlinks"),
+    );
   });
 
   it("draws the ten authority buckets and declares the sample they came from", () => {

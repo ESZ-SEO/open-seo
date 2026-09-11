@@ -33,10 +33,12 @@ import {
  *   1. Shell (~190px): query bar, breadcrumb + help links, title + export,
  *      tab strip, competitor comparison row.
  *   2. KPI strip (~80px): ONE white surface, six cells split by vertical
- *      hairlines — not six cards. Referring Domains and Backlinks carry a
- *      delta derived from the history window; Monthly Visits and Outbound
- *      Domains have no source in DataForSEO and render a neutral `n/a`
- *      without giving up their cell.
+ *      hairlines — not six cards. Which six, and in what order, is
+ *      {@link KPI_CELLS}; every metric the strip can draw is in
+ *      {@link KPI_SPECS}. Referring Domains and Backlinks carry a delta
+ *      derived from the history window; Monthly Visits and Outbound Domains
+ *      have no source in DataForSEO and render a neutral `n/a` without
+ *      giving up their cell.
  *   3. Authority row (~300px): three equal-height cards — Authority Score
  *      (score + badge + 3-axis profile), Authority Score Trend, Network Graph.
  *   4. Two 50/50 history grids: Referring Domains / Backlinks as areas, then
@@ -65,6 +67,16 @@ export type BacklinksTemplateInput = {
   country: string;
   device: string;
   data: BacklinksReportData;
+  /**
+   * Which metrics the KPI strip shows, in order. Defaults to
+   * {@link KPI_CELLS} — the set every caller gets today.
+   *
+   * It is a parameter and not only a constant so the alternative set can be
+   * rendered and asserted from a test at the public entry point: a swap that
+   * nobody can exercise without editing the module is a swap nobody knows
+   * works until the day they need it.
+   */
+  kpiCells?: readonly KpiKey[];
 };
 
 function escapeHtml(value: string): string {
@@ -257,32 +269,156 @@ function shortWindowLabel(dates: string[]): string {
 
 /* ----------------------------- KPI strip ----------------------------- */
 
-type Kpi = {
+type Tiles = BacklinksReportData["tiles"];
+
+/** Every metric the strip knows how to draw, whether or not it is currently
+ *  in {@link KPI_CELLS}. */
+export type KpiKey =
+  | "backlinks"
+  | "brokenBacklinks"
+  | "monthlyVisits"
+  | "organicTraffic"
+  | "outboundDomains"
+  | "referringDomains"
+  | "referringPages"
+  | "toxicity";
+
+type KpiSpec = {
   label: string;
-  value: string;
-  /** Exact figure or the reason there isn't one, on the cell's `title`. */
-  hint: string;
-  delta?: number | null;
+  /** The figure as the cell shows it — abbreviated, or `n/a`. */
+  value: (t: Tiles) => string;
+  /** Exact figure, or the reason there isn't one, for the cell's `title`. */
+  hint: (t: Tiles) => string;
+  /** Fractional change over the history window, where a real base exists. */
+  delta?: (t: Tiles) => number | null;
 };
 
 /**
- * Six cells on one surface, divided by hairlines.
+ * Most cells are the same cell: a count off the summary, abbreviated, with
+ * the exact figure on the tooltip.
+ *
+ * `unsourced` marks a metric no endpoint reports at all, which gets a
+ * different tooltip from one whose source answered without a number — "we
+ * don't have this" and "there's nothing for this period" are different facts
+ * and the reader is entitled to know which one they're looking at.
+ */
+function countSpec(
+  label: string,
+  read: (t: Tiles) => number | null,
+  noun: string,
+  opts: { unsourced?: boolean; delta?: (t: Tiles) => number | null } = {},
+): KpiSpec {
+  return {
+    label,
+    value: (t) => fmtCompact(read(t)),
+    hint: (t) => {
+      const value = read(t);
+      if (value != null) return `${fmtNumber(value)} ${noun}`;
+      return opts.unsourced === true
+        ? `No source reports ${noun} for this domain`
+        : "No data for this period";
+    },
+    delta: opts.delta,
+  };
+}
+
+const KPI_SPECS: Record<KpiKey, KpiSpec> = {
+  referringDomains: countSpec(
+    "Referring Domains",
+    (t) => t.referringDomains.value,
+    "referring domains",
+    { delta: (t) => t.deltas.referringDomains },
+  ),
+  backlinks: countSpec("Backlinks", (t) => t.backlinks.value, "backlinks", {
+    delta: (t) => t.deltas.backlinks,
+  }),
+  monthlyVisits: countSpec(
+    "Monthly Visits",
+    (t) => t.monthlyVisits.value,
+    "monthly visits",
+    { unsourced: true },
+  ),
+  organicTraffic: countSpec(
+    "Organic Traffic",
+    (t) => t.organicTraffic.value,
+    "estimated monthly visits",
+  ),
+  outboundDomains: countSpec(
+    "Outbound Domains",
+    (t) => t.outboundDomains.value,
+    "outbound domains",
+    { unsourced: true },
+  ),
+  referringPages: countSpec(
+    "Referring Pages",
+    (t) => t.referringPages.value,
+    "referring pages",
+  ),
+  brokenBacklinks: countSpec(
+    "Broken Backlinks",
+    (t) => t.brokenBacklinks.value,
+    "broken backlinks",
+  ),
+  toxicity: {
+    label: "Overall Toxicity Score",
+    // A 0-100 score, not a count: shown whole, never abbreviated.
+    value: (t) =>
+      t.toxicity.value == null
+        ? EMPTY_VALUE
+        : String(Math.round(t.toxicity.value)),
+    hint: (t) =>
+      t.toxicity.value == null
+        ? "No data for this period"
+        : "Spam score of the target domain, 0-100",
+  },
+};
+
+/**
+ * The six metrics the strip shows, in order — **the one-line switch**.
+ *
+ * These are the reference's six. Two of them, Monthly Visits and Outbound
+ * Domains, have no DataForSEO endpoint behind them and therefore render a
+ * permanent `n/a` in production: the strip is honest, but a third of it is
+ * dead in every report we ever send.
+ *
+ * The honest alternative is `referringPages` and `brokenBacklinks`, which
+ * come off the same summary call we already pay for. Which pair of six ships
+ * is a product call Pedro has not made, so both are built, both are tested,
+ * and making the swap means editing this array and nothing else.
+ */
+const KPI_CELLS: readonly KpiKey[] = [
+  "referringDomains",
+  "backlinks",
+  "monthlyVisits",
+  "organicTraffic",
+  "outboundDomains",
+  "toxicity",
+];
+
+/**
+ * One surface, one cell per key, divided by hairlines.
  *
  * A cell whose source reports nothing keeps its slot and shows `n/a` in the
- * muted ink. Dropping it would collapse the strip to five, which is the
- * composition this report is moving away from.
+ * muted ink. Dropping it would collapse the strip, which is the composition
+ * this report is moving away from.
+ *
+ * The column count is driven by the list rather than pinned at six in the
+ * stylesheet, so the cells stay evenly divided whatever the list names — a
+ * six-column grid holding five cells leaves a visible dead sixth.
  */
-function renderKpiStrip(kpis: Kpi[]): string {
-  const cells = kpis
-    .map(
-      (k) => `
-      <div class="kpi" title="${escapeHtml(k.hint)}">
-        <div class="kpi-label">${escapeHtml(k.label)}<span class="kpi-info">${ICONS.info}</span></div>
-        <div class="kpi-value${k.value === EMPTY_VALUE ? " kpi-value--empty" : ""}">${escapeHtml(k.value)}${fmtDelta(k.delta ?? null)}</div>
-      </div>`,
-    )
+function renderKpiStrip(tiles: Tiles, cells: readonly KpiKey[]): string {
+  const body = cells
+    .map((key) => {
+      const spec = KPI_SPECS[key];
+      const value = spec.value(tiles);
+      return `
+      <div class="kpi" title="${escapeHtml(spec.hint(tiles))}">
+        <div class="kpi-label">${escapeHtml(spec.label)}<span class="kpi-info">${ICONS.info}</span></div>
+        <div class="kpi-value${value === EMPTY_VALUE ? " kpi-value--empty" : ""}">${escapeHtml(value)}${fmtDelta(spec.delta?.(tiles) ?? null)}</div>
+      </div>`;
+    })
     .join("");
-  return `<div class="card kpis">${cells}</div>`;
+  return `<div class="card kpis" style="grid-template-columns:repeat(${cells.length}, minmax(0, 1fr))">${body}</div>`;
 }
 
 /* ----------------------------- Bar rows ----------------------------- */
@@ -763,65 +899,8 @@ function renderBreakdownCard(
 export function renderBacklinksReport({
   domain,
   data,
+  kpiCells = KPI_CELLS,
 }: BacklinksTemplateInput): string {
-  const t = data.tiles;
-
-  const kpis: Kpi[] = [
-    {
-      label: "Referring Domains",
-      value: fmtCompact(t.referringDomains.value),
-      hint:
-        t.referringDomains.value == null
-          ? "No data for this period"
-          : `${fmtNumber(t.referringDomains.value)} referring domains`,
-      delta: t.deltas.referringDomains,
-    },
-    {
-      label: "Backlinks",
-      value: fmtCompact(t.backlinks.value),
-      hint:
-        t.backlinks.value == null
-          ? "No data for this period"
-          : `${fmtNumber(t.backlinks.value)} backlinks`,
-      delta: t.deltas.backlinks,
-    },
-    {
-      label: "Monthly Visits",
-      value: fmtCompact(t.monthlyVisits.value),
-      hint:
-        t.monthlyVisits.value == null
-          ? "No source reports monthly visits for this domain"
-          : `${fmtNumber(t.monthlyVisits.value)} monthly visits`,
-    },
-    {
-      label: "Organic Traffic",
-      value: fmtCompact(t.organicTraffic.value),
-      hint:
-        t.organicTraffic.value == null
-          ? "No data for this period"
-          : `${fmtNumber(t.organicTraffic.value)} estimated monthly visits`,
-    },
-    {
-      label: "Outbound Domains",
-      value: fmtCompact(t.outboundDomains.value),
-      hint:
-        t.outboundDomains.value == null
-          ? "No source reports outbound domains for this domain"
-          : `${fmtNumber(t.outboundDomains.value)} outbound domains`,
-    },
-    {
-      label: "Overall Toxicity Score",
-      value:
-        t.toxicity.value == null
-          ? EMPTY_VALUE
-          : String(Math.round(t.toxicity.value)),
-      hint:
-        t.toxicity.value == null
-          ? "No data for this period"
-          : `Spam score of the target domain, 0-100`,
-    },
-  ];
-
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1122,7 +1201,7 @@ export function renderBacklinksReport({
       </div>
     </div>
 
-    ${renderKpiStrip(kpis)}
+    ${renderKpiStrip(data.tiles, kpiCells)}
 
     <div class="grid-3">
       ${renderAuthorityCard(data.charts.authorityProfile)}
