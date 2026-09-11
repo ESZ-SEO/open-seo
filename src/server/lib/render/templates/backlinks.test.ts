@@ -1,264 +1,273 @@
 import { describe, expect, it } from "vitest";
 import { renderBacklinksReport } from "@/server/lib/render/templates/backlinks";
-import type {
-  BacklinksReportData,
-  CategoryRow,
-  TypeRow,
-  AnchorRow,
-  AttributeRow,
-  BacklinksGraphNode,
-  BacklinksGraphLink,
-} from "@/server/lib/render/reports/backlinks-report";
+import type { BacklinksReportData } from "@/server/lib/render/reports/backlinks-report";
 
 /**
- * Build a fully-populated BacklinksReportData fixture. The template renders
- * the same HTML for this fixture regardless of Date or randomness.
+ * A payload with every source `ok`. Only the fields the assertions below
+ * depend on carry realistic shapes; everything else is the smallest value its
+ * type allows.
  */
 function makeFixture(): BacklinksReportData {
-  const categories: CategoryRow[] = [
-    { category: "com", share: 0.45, count: 45 },
-    { category: "es", share: 0.25, count: 25 },
-    { category: "org", share: 0.15, count: 15 },
-  ];
-  const types: TypeRow[] = [
-    { type: "Texto", share: 0.7, count: 70 },
-    { type: "Imagen", share: 0.3, count: 30 },
-  ];
-  const attributes: AttributeRow[] = [
-    { attribute: "Follow", share: 0.6, count: 60 },
-    { attribute: "Nofollow", share: 0.3, count: 30 },
-    { attribute: "Sponsored", share: 0.1, count: 10 },
-  ];
-  const topAnchors: AnchorRow[] = [
-    { anchor: "click aquí", backlinks: 30, domains: 20 },
-    { anchor: "ver más", backlinks: 20, domains: 18 },
-  ];
-
-  const nodes: BacklinksGraphNode[] = [
-    { id: "example.com", rank: 100, spamSeverity: 0, backlinks: 1000 },
-    { id: "a.com", rank: 60, spamSeverity: 1, backlinks: 100 },
-    { id: "b.com", rank: 80, spamSeverity: 3, backlinks: 80 },
-    { id: "c.com", rank: 50, spamSeverity: 2, backlinks: 60 },
-  ];
-  const links: BacklinksGraphLink[] = [
-    { source: "example.com", target: "a.com" },
-    { source: "example.com", target: "b.com" },
-    { source: "example.com", target: "c.com" },
-  ];
-
   return {
     input: { domain: "example.com", country: "ES", countryLabel: "ES" },
     healthy: true,
     tiles: {
       authority: { value: 72, source: "ok" },
       authorityComposition: { rank: 80, spamPenalty: 8 },
-      backlinks: { value: 1234, source: "ok" },
-      organicTraffic: { value: 5678, source: "ok" },
-      referringDomains: { value: 89, source: "ok" },
-      toxicity: { value: 12, source: "ok" },
+      referringDomains: { value: 6_240, source: "ok" },
+      backlinks: { value: 428_500, source: "ok" },
+      // No DataForSEO endpoint reports either of these — the two cells the
+      // KPI strip has to keep without a number.
+      monthlyVisits: { value: null, source: "empty" },
+      organicTraffic: { value: 184_200, source: "ok" },
+      outboundDomains: { value: null, source: "empty" },
+      toxicity: { value: 14, source: "ok" },
+      deltas: { referringDomains: -0.03, backlinks: 0.08 },
     },
     charts: {
-      authorityRadar: {
+      authorityProfile: {
+        source: "ok",
         value: {
+          score: 72,
+          badge: "Industry leader",
           axes: [
-            { label: "Autoridad", value: 80 },
-            { label: "Referrers", value: 65 },
-            { label: "Diversidad", value: 50 },
-            { label: "Limpieza", value: 70 },
-            { label: "Crecimiento", value: 45 },
+            { label: "Link Power", value: 80 },
+            { label: "Organic Traffic", value: 65 },
+            { label: "Natural Profile", value: 88 },
           ],
         },
-        source: "ok",
       },
-      authorityTrend: {
+      authorityTrend: { source: "ok", value: { points: series() } },
+      networkGraph: {
+        source: "ok",
         value: {
-          points: [
-            { date: "2026-04-15", value: 60 },
-            { date: "2026-05-15", value: 65 },
-            { date: "2026-06-15", value: 70 },
+          nodes: [
+            { id: "example.com", rank: 80, spamSeverity: 0, backlinks: 1_000 },
+            { id: "a.test", rank: 60, spamSeverity: 1, backlinks: 100 },
+            { id: "b.test", rank: 82, spamSeverity: 0, backlinks: 80 },
+          ],
+          links: [
+            { source: "example.com", target: "a.test" },
+            { source: "example.com", target: "b.test" },
           ],
         },
-        source: "ok",
       },
-      networkGraph: { value: { nodes, links }, source: "ok" },
-      referringDomainsArea: {
-        value: {
-          points: [
-            { date: "2026-04-15", value: 70 },
-            { date: "2026-05-15", value: 80 },
-            { date: "2026-06-15", value: 89 },
-          ],
-        },
-        source: "ok",
-      },
-      backlinksArea: {
-        value: {
-          points: [
-            { date: "2026-04-15", value: 1000 },
-            { date: "2026-05-15", value: 1100 },
-            { date: "2026-06-15", value: 1234 },
-          ],
-        },
-        source: "ok",
-      },
-      referringDomainsBars: {
-        value: {
-          points: [
-            { date: "2026-04-15", new: 10, lost: 4 },
-            { date: "2026-05-15", new: 12, lost: 5 },
-            { date: "2026-06-15", new: 8, lost: 3 },
-          ],
-        },
-        source: "ok",
-      },
-      backlinksBars: {
-        value: {
-          points: [
-            { date: "2026-04-15", new: 50, lost: 20 },
-            { date: "2026-05-15", new: 60, lost: 25 },
-            { date: "2026-06-15", new: 40, lost: 18 },
-          ],
-        },
-        source: "ok",
-      },
+      referringDomainsArea: { source: "ok", value: { points: series() } },
+      backlinksArea: { source: "ok", value: { points: series() } },
+      referringDomainsBars: { source: "ok", value: { points: bars() } },
+      backlinksBars: { source: "ok", value: { points: bars() } },
     },
     tables: {
-      categories: { value: categories, source: "ok" },
-      types: { value: types, source: "ok" },
-      attributes: { value: attributes, source: "ok" },
-      topAnchors: { value: topAnchors, source: "ok" },
+      categories: {
+        source: "ok",
+        value: [
+          { category: "com", share: 0.45, count: 2_558 },
+          { category: "es", share: 0.25, count: 1_373 },
+        ],
+      },
+      categoriesDimension: "TLD",
+      topAnchors: {
+        source: "ok",
+        value: [{ anchor: "example preview", backlinks: 30, domains: 20 }],
+      },
+      authorityDistribution: { source: "ok", value: authorityBuckets() },
+      authorityDistributionSample: 6_240,
+      types: {
+        source: "ok",
+        value: [{ type: "Text", share: 0.76, count: 291_380 }],
+      },
+      attributes: {
+        source: "ok",
+        value: [{ attribute: "Follow", share: 0.84, count: 269_955 }],
+      },
     },
   };
 }
 
+/** The same payload with every source failed — the state the page has to
+ *  survive without losing a module or changing shape. */
+function makeFailedFixture(): BacklinksReportData {
+  const base = makeFixture();
+  const noSeries = { source: "error" as const, value: { points: [] } };
+  return {
+    ...base,
+    healthy: false,
+    tiles: {
+      ...base.tiles,
+      authority: { value: null, source: "error" },
+      referringDomains: { value: null, source: "error" },
+      backlinks: { value: null, source: "error" },
+      organicTraffic: { value: null, source: "error" },
+      toxicity: { value: null, source: "error" },
+      deltas: { referringDomains: null, backlinks: null },
+    },
+    charts: {
+      authorityProfile: {
+        source: "error",
+        value: { score: null, badge: null, axes: [] },
+      },
+      authorityTrend: noSeries,
+      networkGraph: { source: "error", value: { nodes: [], links: [] } },
+      referringDomainsArea: noSeries,
+      backlinksArea: noSeries,
+      referringDomainsBars: { source: "error", value: { points: [] } },
+      backlinksBars: { source: "error", value: { points: [] } },
+    },
+    tables: {
+      ...base.tables,
+      categories: { source: "error", value: [] },
+      topAnchors: { source: "error", value: [] },
+      authorityDistribution: { source: "error", value: [] },
+      authorityDistributionSample: 0,
+      types: { source: "error", value: [] },
+      attributes: { source: "error", value: [] },
+    },
+  };
+}
+
+function series(): { date: string; value: number | null }[] {
+  return [
+    { date: "2026-06-15", value: 60 },
+    { date: "2026-06-22", value: 65 },
+    { date: "2026-06-29", value: 70 },
+  ];
+}
+
+function bars(): { date: string; new: number; lost: number }[] {
+  return [
+    { date: "2026-06-15", new: 10, lost: 4 },
+    { date: "2026-06-22", new: 12, lost: 5 },
+  ];
+}
+
+/** Ten buckets, the shape the service guarantees. */
+function authorityBuckets() {
+  const ranges = [
+    "91 - 100",
+    "81 - 90",
+    "71 - 80",
+    "61 - 70",
+    "51 - 60",
+    "41 - 50",
+    "31 - 40",
+    "21 - 30",
+    "11 - 20",
+    "0 - 10",
+  ];
+  return ranges.map((range, i) => ({
+    range,
+    share: 0.1,
+    count: 100 * (i + 1),
+  }));
+}
+
+function render(data: BacklinksReportData, domain = "example.com"): string {
+  return renderBacklinksReport({
+    report: "backlinks",
+    domain,
+    country: "ES",
+    device: "desktop",
+    data,
+  });
+}
+
+function countMatches(html: string, pattern: RegExp): number {
+  return (html.match(pattern) ?? []).length;
+}
+
 describe("renderBacklinksReport · template", () => {
-  it("produces a self-contained unbranded HTML document", () => {
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      data: makeFixture(),
-    });
+  it("is a self-contained document with no external resources or script", () => {
+    const html = render(makeFixture());
 
     expect(html).toContain("<!DOCTYPE html>");
-    expect(html).toContain('<html lang="es">');
+    expect(html).toContain('<html lang="en">');
     expect(html).toContain("<style>");
-    expect(html).toContain("example.com");
-    expect(html).not.toContain("open-seo");
-  });
-
-  it("honours spec §2 — does not include Semrush brand or proprietary metric names", () => {
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      data: makeFixture(),
-    });
-    expect(html).not.toMatch(/semrush/i);
-    expect(html).toContain("Puntuación de autoridad"); // renamed metric
-  });
-
-  it("renders all 5 tile labels with the correct data", () => {
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      data: makeFixture(),
-    });
-    expect(html).toContain("Puntuación de autoridad");
-    expect(html).toContain("Backlinks");
-    expect(html).toContain("Tráfico orgánico");
-    expect(html).toContain("Dominios de referencia");
-    expect(html).toContain("Toxicidad");
-    expect(html).toContain("72"); // authority score
-    expect(html).toContain("1234"); // backlinks total
-    expect(html).toContain("5678"); // organic traffic
-    expect(html).toContain("89"); // referring domains
-  });
-
-  it("renders all 7 chart container titles from spec §6.2", () => {
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      data: makeFixture(),
-    });
-    expect(html).toContain("Radar de autoridad");
-    expect(html).toContain("Tendencia de autoridad");
-    expect(html).toContain("Grafo de red");
-    expect(html).toContain("Dominios en el tiempo");
-    expect(html).toContain("Backlinks en el tiempo");
-    expect(html).toContain("Nuevos vs perdidos (dominios)");
-    expect(html).toContain("Nuevos vs perdidos (backlinks)");
-  });
-
-  it("renders all 4 table titles from spec §6.2", () => {
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      data: makeFixture(),
-    });
-    expect(html).toContain("Categorías de dominios de referencia");
-    expect(html).toContain("Tipos de backlinks");
-    expect(html).toContain("Atributos del enlace");
-    expect(html).toContain("Mejores anchors");
-  });
-
-  it("renders the 7 SVG chart fragments from the backlinks layout", () => {
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      data: makeFixture(),
-    });
-    // 7 chart cards from Anexo A.3.
-    const svgCount = (html.match(/<svg /g) ?? []).length;
-    expect(svgCount).toBeGreaterThanOrEqual(7);
-  });
-
-  it("inlines styles and does NOT load external CSS", () => {
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      data: makeFixture(),
-    });
     expect(html).not.toMatch(/<link[^>]+rel="stylesheet"/);
     expect(html).not.toMatch(/@import/);
-    expect(html).not.toMatch(/tailwind|daisyui/);
+    expect(html).not.toMatch(/<script/);
   });
 
-  it("escapes user-controlled domain to avoid HTML injection", () => {
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "<script>alert(1)</script>.evil.com",
-      country: "ES",
-      device: "desktop",
-      data: makeFixture(),
-    });
+  it("carries no reference-product branding", () => {
+    // Guards the comments too — the word has slipped in through a code
+    // comment before.
+    expect(render(makeFixture())).not.toMatch(/semrush/i);
+  });
+
+  it("escapes the user-controlled domain", () => {
+    const html = render(makeFixture(), "<script>alert(1)</script>.evil.com");
+
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("shows a 'Datos parciales' chip when the report is not fully healthy", () => {
-    const partial = makeFixture();
-    partial.healthy = false;
-    partial.tiles.backlinks = { value: null, source: "error" };
-    const html = renderBacklinksReport({
-      report: "backlinks",
-      domain: "example.com",
-      country: "ES",
-      device: "desktop",
-      data: partial,
-    });
-    expect(html).toContain("Datos parciales");
+  it("keeps all six KPI cells, showing n/a for the two with no source", () => {
+    const html = render(makeFixture());
+
+    for (const label of [
+      "Referring Domains",
+      "Backlinks",
+      "Monthly Visits",
+      "Organic Traffic",
+      "Outbound Domains",
+      "Overall Toxicity Score",
+    ]) {
+      expect(html).toContain(label);
+    }
+    expect(countMatches(html, /class="kpi"/g)).toBe(6);
+    expect(countMatches(html, /kpi-value kpi-value--empty/g)).toBe(2);
+  });
+
+  it("draws the ten authority buckets and declares the sample they came from", () => {
+    const html = render(makeFixture());
+
+    expect(html).toContain("Referring Domains by Authority Score");
+    expect(html).toContain("Based on the top 6,240 referring domains");
+    // 10 buckets + one type row + one attribute row.
+    expect(countMatches(html, /class="brow brow--inline"/g)).toBe(12);
+    expect(html).toContain("91 - 100");
+    expect(html).toContain("0 - 10");
+  });
+
+  it("combines Backlink Types and Link Attributes into one card", () => {
+    const html = render(makeFixture());
+    const card = html.slice(html.indexOf("Backlink Types"));
+
+    expect(card).toContain("Link Attributes");
+    // The divider between the two halves is what makes it one card rather
+    // than two stacked ones.
+    expect(card).toContain('class="split"');
+  });
+
+  it("names the dimension the categories are actually grouped by", () => {
+    expect(render(makeFixture())).toContain("Grouped by TLD");
+  });
+
+  it("keeps every module and its row count when every source fails", () => {
+    const populated = render(makeFixture());
+    const failed = render(makeFailedFixture());
+
+    for (const title of [
+      "Authority Score",
+      "Authority Score Trend",
+      "Network Graph",
+      "Referring Domains",
+      "New and Lost Backlinks",
+      "Categories of Referring Domains",
+      "Top Anchors",
+      "Referring Domains by Authority Score",
+      "Backlink Types",
+      "Link Attributes",
+    ]) {
+      expect(failed).toContain(title);
+    }
+    // Same number of bar rows as the populated page budgets: 5 categories,
+    // 10 buckets and 4 + 4 breakdown rows, so nothing below them moves.
+    expect(countMatches(failed, /class="brow brow--stacked"/g)).toBe(5);
+    expect(countMatches(failed, /class="brow brow--inline"/g)).toBe(18);
+    // The populated fixture's own cards keep their min-height class either
+    // way, which is what holds the page when a chart degrades.
+    expect(countMatches(failed, /class="card card-breakdown"/g)).toBe(
+      countMatches(populated, /class="card card-breakdown"/g),
+    );
   });
 });

@@ -84,6 +84,17 @@ function err<T>(fallback: T): Source<T> {
   return { value: fallback, source: "error" };
 }
 
+/**
+ * Resolve a `Source` from a settled-promise status plus an already-derived
+ * value: `err` if the underlying call failed, `empty` if it succeeded with
+ * nothing usable, `ok` otherwise. Centralises the "fulfilled ? (hasValue ?
+ * ok : empty) : err" pattern repeated across this file's fan-out.
+ */
+function sourceFor<T>(fulfilled: boolean, hasValue: boolean, value: T): Source<T> {
+  if (!fulfilled) return err(value);
+  return hasValue ? ok(value) : empty(value);
+}
+
 /** Convenience: pick the value out of a `Source` regardless of its variant. */
 function unwrap<T>(s: Source<T>): T {
   return s.value;
@@ -97,6 +108,10 @@ export type AttributeRow = {
   share: number;
   count: number;
 };
+/** One bucket of the "referring domains by authority" distribution. */
+export type AuthorityBucketRow = { range: string; share: number; count: number };
+/** One axis of the composed authority profile (exactly 3 today). */
+export type AuthorityAxis = { label: string; value: number };
 
 export type BacklinksGraphNode = {
   id: string;
@@ -114,14 +129,47 @@ export type BacklinksReportData = {
   tiles: {
     authority: Source<number | null>;
     authorityComposition: { rank: number | null; spamPenalty: number };
-    backlinks: Source<number | null>;
-    organicTraffic: Source<number | null>;
     referringDomains: Source<number | null>;
+    backlinks: Source<number | null>;
+    /**
+     * DataForSEO does not expose a "monthly visits" metric anywhere in
+     * `src/server/lib/dataforseo/` (verified — no traffic-estimate endpoint
+     * covers it). The tile stays in the payload because removing it would
+     * collapse the 6-cell KPI strip (playbook §3 — keep the geometry, never
+     * fabricate the number). It would need a new DataForSEO Labs/traffic
+     * endpoint (or a different data source entirely) to ever carry a value.
+     */
+    monthlyVisits: Source<number | null>;
+    organicTraffic: Source<number | null>;
+    /**
+     * Same situation as `monthlyVisits`: no DataForSEO endpoint reports the
+     * count of domains a target links out to. Always empty until such an
+     * endpoint exists.
+     */
+    outboundDomains: Source<number | null>;
     toxicity: Source<number | null>;
+    /**
+     * Fractional change across the history window (-0.03 = -3%), derived
+     * from the first vs. last non-null point of `fetchBacklinksHistory`
+     * (see `computeDelta`). `null` when there is no real base to compare
+     * against — never fabricated (playbook §3).
+     */
+    deltas: {
+      referringDomains: number | null;
+      backlinks: number | null;
+    };
   };
   charts: {
-    /** Radar of composed authority dimensions. */
-    authorityRadar: Source<{ axes: { label: string; value: number }[] }>;
+    /**
+     * Composed authority profile: a 0-100 score, a semantic badge, and
+     * exactly 3 axes. Replaces the earlier 5-axis radar — see
+     * `buildAuthorityProfile` for the explicit, documented mapping.
+     */
+    authorityProfile: Source<{
+      score: number | null;
+      badge: string | null;
+      axes: AuthorityAxis[];
+    }>;
     /** Trend line of authority score over time (last ~12 weeks of history). */
     authorityTrend: Source<{
       points: { date: string; value: number | null }[];
@@ -148,9 +196,23 @@ export type BacklinksReportData = {
   };
   tables: {
     categories: Source<CategoryRow[]>;
+    /**
+     * What dimension `categories` actually groups by. DataForSEO does not
+     * classify referring domains by industry — the rows are grouped by TLD
+     * (see `buildTables`) — so the template shows this instead of implying
+     * a taxonomy we don't have.
+     */
+    categoriesDimension: string;
+    topAnchors: Source<AnchorRow[]>;
+    /**
+     * Referring domains bucketed by authority `rank`, always exactly 10
+     * buckets (even at 0) so the geometry never collapses.
+     */
+    authorityDistribution: Source<AuthorityBucketRow[]>;
+    /** How many referring domains were actually bucketed (sample size/scope). */
+    authorityDistributionSample: number;
     types: Source<TypeRow[]>;
     attributes: Source<AttributeRow[]>;
-    topAnchors: Source<AnchorRow[]>;
   };
 };
 
@@ -200,10 +262,10 @@ function countBy<T>(
 
 /** Pretty label for a backlink `item_type`. */
 const TYPE_LABELS: Record<string, string> = {
-  text: "Texto",
-  image: "Imagen",
-  form: "Formulario",
-  frame: "Marco",
+  text: "Text",
+  image: "Image",
+  form: "Form",
+  frame: "Frame",
 };
 
 /** Map a list of attributes to buckets the report cares about. */
@@ -277,8 +339,8 @@ function buildTables(rows: BacklinksItem[]) {
       categoryCounts.set("other", (categoryCounts.get("other") ?? 0) + 1);
     }
 
-    const anchor = (row.anchor ?? "").trim() || "[sin anchor]";
-    const domain = row.domain_from ?? row.url_from ?? "(desconocido)";
+    const anchor = (row.anchor ?? "").trim() || "[Empty anchor]";
+    const domain = row.domain_from ?? row.url_from ?? "(unknown)";
     const entry = anchorCounts.get(anchor) ?? {
       backlinks: 0,
       domains: new Set<string>(),
@@ -341,7 +403,7 @@ function buildNetworkGraph(target: string, referring: ReferringDomainItem[]) {
       backlinks: referring.reduce((acc, r) => acc + (r.backlinks ?? 0), 0),
     },
     ...top.map((r) => ({
-      id: r.domain ?? "(desconocido)",
+      id: r.domain ?? "(unknown)",
       rank: typeof r.rank === "number" ? r.rank : 0,
       spamSeverity: spamSeverity(r.backlinks_spam_score),
       backlinks: r.backlinks ?? 0,
@@ -350,7 +412,7 @@ function buildNetworkGraph(target: string, referring: ReferringDomainItem[]) {
 
   const links: BacklinksGraphLink[] = top.map((r) => ({
     source: target,
-    target: r.domain ?? "(desconocido)",
+    target: r.domain ?? "(unknown)",
   }));
 
   return { nodes, links };
@@ -404,34 +466,129 @@ function buildHistorySeries(history: BacklinksHistoryItem[]) {
   };
 }
 
-/** Axes for the radar — same proprietary dimensions the spec lists. */
-function buildRadarAxes(summary: BacklinksSummaryItem) {
-  const rank = summary.rank ?? 0;
-  const referring = Math.min(
-    100,
-    Math.round((summary.referring_domains ?? 0) / 50),
+/**
+ * Ceiling ETV (organic traffic) treated as "top of scale" for the Organic
+ * Traffic axis. ETV spans many orders of magnitude — 0 for small sites to
+ * tens of millions for market leaders — so a linear 0-100 mapping would
+ * flatten almost every real domain near zero. A log10 scale keeps the axis
+ * meaningful across that range; 10M ETV is the point at which the axis
+ * saturates to 100.
+ */
+const ORGANIC_TRAFFIC_AXIS_CAP = 10_000_000;
+
+/** Normalise organic traffic (ETV) to a 0-100 axis value via a log10 scale. */
+function organicTrafficAxisValue(etv: number | null): number {
+  if (etv == null || etv <= 0) return 0;
+  const scaled =
+    Math.log10(etv + 1) / Math.log10(ORGANIC_TRAFFIC_AXIS_CAP + 1);
+  return Math.max(0, Math.min(100, Math.round(scaled * 100)));
+}
+
+/** Semantic label for an authority score. `null` when the score itself is `null`. */
+function authorityBadge(score: number | null): string | null {
+  if (score == null) return null;
+  if (score >= 70) return "Industry leader";
+  if (score >= 50) return "Strong";
+  if (score >= 30) return "Developing";
+  return "Low authority";
+}
+
+/**
+ * Composed authority profile: a score, a badge, and exactly 3 axes.
+ * Explicit mapping (no arbitrary composition):
+ *  - Link Power      ← `summary.rank`, already 0-100 (`rank_scale=one_hundred`).
+ *  - Organic Traffic ← Labs `etv`, log-scaled (see `organicTrafficAxisValue`).
+ *  - Natural Profile ← `100 - backlinks_spam_score`, clamped to [0,100].
+ */
+function buildAuthorityProfile(
+  summary: BacklinksSummaryItem,
+  etv: number | null,
+  score: number | null,
+): { score: number | null; badge: string | null; axes: AuthorityAxis[] } {
+  const linkPower = Math.max(0, Math.min(100, Math.round(summary.rank ?? 0)));
+  const naturalProfile = Math.max(
+    0,
+    Math.min(100, 100 - (summary.backlinks_spam_score ?? 0)),
   );
-  const diversity = Math.min(
-    100,
-    Math.round((summary.referring_pages ?? 0) / 50),
+  const axes: AuthorityAxis[] = [
+    { label: "Link Power", value: linkPower },
+    { label: "Organic Traffic", value: organicTrafficAxisValue(etv) },
+    { label: "Natural Profile", value: Math.round(naturalProfile) },
+  ];
+  return { score, badge: authorityBadge(score), axes };
+}
+
+/**
+ * Fractional change between the first and last non-null point of a history
+ * series (-0.03 = -3%). `null` when there's no real base to compare against:
+ * fewer than two non-null points, or a zero base (playbook §3 — never a
+ * delta without a real base).
+ */
+function computeDelta(
+  points: { date: string; value: number | null }[] | null,
+): number | null {
+  if (!points) return null;
+  // Single forward pass (no copy/reverse) tracking the first and last
+  // non-null values and how many we saw.
+  let from: number | null = null;
+  let to: number | null = null;
+  let nonNullCount = 0;
+  for (const point of points) {
+    if (point.value == null) continue;
+    from ??= point.value;
+    to = point.value;
+    nonNullCount += 1;
+  }
+  if (nonNullCount < 2 || from == null || to == null || from === 0) {
+    return null;
+  }
+  return (to - from) / from;
+}
+
+/** Fixed bucket ranges for the authority distribution, in display order. */
+const AUTHORITY_BUCKETS: { range: string; min: number; max: number }[] = [
+  { range: "91 - 100", min: 91, max: 100 },
+  { range: "81 - 90", min: 81, max: 90 },
+  { range: "71 - 80", min: 71, max: 80 },
+  { range: "61 - 70", min: 61, max: 70 },
+  { range: "51 - 60", min: 51, max: 60 },
+  { range: "41 - 50", min: 41, max: 50 },
+  { range: "31 - 40", min: 31, max: 40 },
+  { range: "21 - 30", min: 21, max: 30 },
+  { range: "11 - 20", min: 11, max: 20 },
+  { range: "0 - 10", min: 0, max: 10 },
+];
+
+/**
+ * Bucket referring domains by `rank` into the 10 fixed authority ranges.
+ * Always returns all 10 buckets, in order, even when a bucket is empty —
+ * the geometry never collapses (playbook §3). `sample` is how many domains
+ * actually had a numeric rank and were counted, so the template can declare
+ * the scope of the distribution (today: top 50 by backlinks, not the full set).
+ */
+function buildAuthorityDistribution(domains: ReferringDomainItem[]): {
+  rows: AuthorityBucketRow[];
+  sample: number;
+} {
+  const counts = new Map<string, number>(
+    AUTHORITY_BUCKETS.map((b) => [b.range, 0]),
   );
-  const spam = Math.max(0, 100 - (summary.backlinks_spam_score ?? 0));
-  const newRatio = (() => {
-    const n = summary.new_backlinks ?? 0;
-    const l = summary.lost_backlinks ?? 0;
-    const total = n + l;
-    if (total === 0) return 50;
-    return Math.round((n / total) * 100);
-  })();
-  return {
-    axes: [
-      { label: "Autoridad", value: Math.max(0, Math.min(100, rank)) },
-      { label: "Referrers", value: referring },
-      { label: "Diversidad", value: diversity },
-      { label: "Limpieza", value: spam },
-      { label: "Crecimiento", value: newRatio },
-    ],
-  };
+  let sample = 0;
+  for (const domain of domains) {
+    const rank = domain.rank;
+    if (typeof rank !== "number") continue;
+    const bucket = AUTHORITY_BUCKETS.find(
+      (b) => rank >= b.min && rank <= b.max,
+    );
+    if (!bucket) continue;
+    counts.set(bucket.range, (counts.get(bucket.range) ?? 0) + 1);
+    sample += 1;
+  }
+  const rows: AuthorityBucketRow[] = AUTHORITY_BUCKETS.map((b) => {
+    const count = counts.get(b.range) ?? 0;
+    return { range: b.range, count, share: sample > 0 ? count / sample : 0 };
+  });
+  return { rows, sample };
 }
 
 /**
@@ -510,8 +667,12 @@ export async function buildBacklinksReportData(
     metrics?: { organic?: { etv?: number | null } | null } | null;
   }[] = labsSettled.status === "fulfilled" ? (labsSettled.value.data ?? []) : [];
 
-  // ---- Tiles ----
+  // ---- Shared derived values (tiles + charts both need these) ----
   const authorityScore = computeAuthorityScore(summary);
+  const etv = pickOrganicTraffic(labsItems);
+  const series = buildHistorySeries(history);
+
+  // ---- Tiles ----
   const tiles = {
     authority:
       authorityScore != null ? ok(authorityScore) : empty<number | null>(null),
@@ -521,38 +682,47 @@ export async function buildBacklinksReportData(
         ? Math.min(25, Math.round(summary.backlinks_spam_score * 0.25))
         : 0,
     },
-    backlinks:
-      summarySettled.status === "fulfilled" && summary.backlinks != null
-        ? ok(summary.backlinks)
-        : summarySettled.status === "fulfilled"
-          ? empty<number | null>(null)
-          : err<number | null>(null),
-    organicTraffic: (() => {
-      const etv = pickOrganicTraffic(labsItems);
-      return labsSettled.status === "fulfilled"
-        ? etv != null
-          ? ok(etv)
-          : empty<number | null>(null)
-        : err<number | null>(null);
-    })(),
     referringDomains:
       summarySettled.status === "fulfilled" && summary.referring_domains != null
         ? ok(summary.referring_domains)
         : summarySettled.status === "fulfilled"
           ? empty<number | null>(null)
           : err<number | null>(null),
+    backlinks:
+      summarySettled.status === "fulfilled" && summary.backlinks != null
+        ? ok(summary.backlinks)
+        : summarySettled.status === "fulfilled"
+          ? empty<number | null>(null)
+          : err<number | null>(null),
+    // No DataForSEO endpoint exposes this — see the field's JSDoc on the type.
+    monthlyVisits: empty<number | null>(null),
+    organicTraffic:
+      labsSettled.status === "fulfilled"
+        ? etv != null
+          ? ok(etv)
+          : empty<number | null>(null)
+        : err<number | null>(null),
+    // No DataForSEO endpoint exposes this — see the field's JSDoc on the type.
+    outboundDomains: empty<number | null>(null),
     toxicity: (() => {
       const toxicity = summary.info?.target_spam_score ?? null;
       return toxicity != null ? ok(toxicity) : empty<number | null>(null);
     })(),
+    deltas: {
+      referringDomains: computeDelta(series.referringArea),
+      backlinks: computeDelta(series.backlinksArea),
+    },
   };
 
   // ---- Charts ----
-  const series = buildHistorySeries(history);
-  const authorityAxes = buildRadarAxes(summary);
+  const authorityProfile = buildAuthorityProfile(summary, etv, authorityScore);
 
   const charts = {
-    authorityRadar: ok(authorityAxes),
+    authorityProfile: sourceFor(
+      summarySettled.status === "fulfilled",
+      authorityScore != null,
+      authorityProfile,
+    ),
     authorityTrend:
       series.trend != null
         ? ok({ points: series.trend })
@@ -591,14 +761,25 @@ export async function buildBacklinksReportData(
 
   // ---- Tables ----
   const tableData = rows.length > 0 ? buildTables(rows) : null;
+  const authorityDistribution = buildAuthorityDistribution(
+    refDomainsSettled.status === "fulfilled" ? refDomains : [],
+  );
   const tables = {
     categories:
       tableData !== null ? ok(tableData.categories) : empty<CategoryRow[]>([]),
+    // DataForSEO doesn't classify by industry — categories are grouped by TLD.
+    categoriesDimension: "TLD",
+    topAnchors:
+      tableData !== null ? ok(tableData.topAnchors) : empty<AnchorRow[]>([]),
+    authorityDistribution: sourceFor(
+      refDomainsSettled.status === "fulfilled",
+      true,
+      authorityDistribution.rows,
+    ),
+    authorityDistributionSample: authorityDistribution.sample,
     types: tableData !== null ? ok(tableData.types) : empty<TypeRow[]>([]),
     attributes:
       tableData !== null ? ok(tableData.attributes) : empty<AttributeRow[]>([]),
-    topAnchors:
-      tableData !== null ? ok(tableData.topAnchors) : empty<AnchorRow[]>([]),
   };
 
   const healthy = [
@@ -641,9 +822,14 @@ export const __test = {
   buildTables,
   buildNetworkGraph,
   buildHistorySeries,
-  buildRadarAxes,
+  organicTrafficAxisValue,
+  authorityBadge,
+  buildAuthorityProfile,
+  computeDelta,
+  buildAuthorityDistribution,
   ok,
   empty,
   err,
+  sourceFor,
   unwrap,
 };

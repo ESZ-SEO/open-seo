@@ -36,3 +36,22 @@ the crawler's same-origin filter drops. Run it as
 `vite build`). Also: `pnpm --filter badseo audit` fails with
 "Unknown option: 'recursive'" from the repo root — badseo is its own pnpm
 workspace, not a root workspace member; use `npx tsx badseo/scripts/run-audit.ts`.
+
+## 2026-09-11 — `node_modules/zod` symlink pointed at an empty package dir
+
+**Friction:** `require("zod")` failed repo-wide with `MODULE_NOT_FOUND`, blocking any vitest
+run that touches `src/server/lib/dataforseo/*`. The top-level `node_modules/zod` symlink
+resolves to `node_modules/.pnpm/zod@4.3.6/node_modules/zod`, and that directory was present
+but completely empty. A sibling `zod@4.4.3` was intact, which makes the failure look
+selective and easy to misdiagnose as "node_modules is corrupted repo-wide".
+
+**Gotcha:** `pnpm install --offline --frozen-lockfile` reports `Already up to date` and does
+NOT repair it — pnpm treats an empty-but-present package directory as installed.
+
+**What worked:** remove just the broken directory, then relink from the local store:
+```
+mv node_modules/.pnpm/zod@4.3.6 ~/.alex-trash/$(date +%F)/
+pnpm install --offline
+```
+`pnpm-lock.yaml` stays untouched. Suspected cause: OneDrive sync, consistent with the
+existing OneDrive-vs-file-write friction noted in the render-reports playbook.

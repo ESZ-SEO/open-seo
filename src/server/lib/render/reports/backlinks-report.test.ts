@@ -11,6 +11,7 @@ import type {
 import type {
   AnchorRow,
   AttributeRow,
+  AuthorityBucketRow,
   CategoryRow,
   TypeRow,
 } from "@/server/lib/render/reports/backlinks-report";
@@ -230,8 +231,8 @@ describe("backlinks-report · helpers", () => {
 
       // Types
       const typeLabels = tables.types.map((t) => t.type).sort();
-      expect(typeLabels).toContain("Texto");
-      expect(typeLabels).toContain("Imagen");
+      expect(typeLabels).toContain("Text");
+      expect(typeLabels).toContain("Image");
 
       // Categories (TLD of host)
       const categories = tables.categories.map((c) => c.category).sort();
@@ -248,14 +249,17 @@ describe("backlinks-report · BacklinksReportData shape", () => {
       tiles: {
         authority: { value: 70, source: "ok" },
         authorityComposition: { rank: 70, spamPenalty: 5 },
-        backlinks: { value: 1234, source: "ok" },
-        organicTraffic: { value: 5678, source: "ok" },
         referringDomains: { value: 89, source: "ok" },
+        backlinks: { value: 1234, source: "ok" },
+        monthlyVisits: { value: null, source: "empty" },
+        organicTraffic: { value: 5678, source: "ok" },
+        outboundDomains: { value: null, source: "empty" },
         toxicity: { value: 12, source: "ok" },
+        deltas: { referringDomains: 0.05, backlinks: null },
       },
       charts: {
-        authorityRadar: {
-          value: { axes: [{ label: "x", value: 1 }] },
+        authorityProfile: {
+          value: { score: 70, badge: "Strong", axes: [{ label: "x", value: 1 }] },
           source: "ok",
         },
         authorityTrend: { value: { points: [] }, source: "empty" },
@@ -267,12 +271,94 @@ describe("backlinks-report · BacklinksReportData shape", () => {
       },
       tables: {
         categories: { value: [] as CategoryRow[], source: "empty" },
+        categoriesDimension: "TLD",
+        topAnchors: { value: [] as AnchorRow[], source: "empty" },
+        authorityDistribution: {
+          value: [] as AuthorityBucketRow[],
+          source: "empty",
+        },
+        authorityDistributionSample: 0,
         types: { value: [] as TypeRow[], source: "empty" },
         attributes: { value: [] as AttributeRow[], source: "empty" },
-        topAnchors: { value: [] as AnchorRow[], source: "empty" },
       },
     };
     expect(minimal.tiles.authority.value).toBe(70);
-    expect(minimal.charts.authorityRadar.value.axes).toHaveLength(1);
+    expect(minimal.charts.authorityProfile.value.axes).toHaveLength(1);
+  });
+});
+
+describe("backlinks-report · authority profile & distribution", () => {
+  describe("buildAuthorityProfile", () => {
+    it("emits exactly 3 axes, clamped to [0,100]", () => {
+      const profile = __test.buildAuthorityProfile(
+        { rank: 150, backlinks_spam_score: 200 },
+        50_000_000, // above the log-scale cap
+        70,
+      );
+      expect(profile.axes).toHaveLength(3);
+      for (const axis of profile.axes) {
+        expect(axis.value).toBeGreaterThanOrEqual(0);
+        expect(axis.value).toBeLessThanOrEqual(100);
+      }
+      expect(profile.score).toBe(70);
+      expect(profile.badge).toBe("Industry leader");
+    });
+  });
+
+  describe("computeDelta", () => {
+    it("computes the fractional change from first to last non-null point", () => {
+      const delta = __test.computeDelta([
+        { date: "2026-01-01", value: 100 },
+        { date: "2026-01-08", value: null },
+        { date: "2026-01-15", value: 120 },
+      ]);
+      expect(delta).toBeCloseTo(0.2);
+    });
+
+    it("returns null without a real base (no points, one point, or zero base)", () => {
+      expect(__test.computeDelta(null)).toBeNull();
+      expect(__test.computeDelta([{ date: "2026-01-01", value: 10 }])).toBeNull();
+      expect(
+        __test.computeDelta([
+          { date: "2026-01-01", value: 0 },
+          { date: "2026-01-08", value: 10 },
+        ]),
+      ).toBeNull();
+    });
+  });
+
+  describe("buildAuthorityDistribution", () => {
+    it("always emits all 10 buckets in order, even with an empty list", () => {
+      const { rows, sample } = __test.buildAuthorityDistribution([]);
+      expect(rows.map((r) => r.range)).toEqual([
+        "91 - 100",
+        "81 - 90",
+        "71 - 80",
+        "61 - 70",
+        "51 - 60",
+        "41 - 50",
+        "31 - 40",
+        "21 - 30",
+        "11 - 20",
+        "0 - 10",
+      ]);
+      expect(rows.every((r) => r.count === 0 && r.share === 0)).toBe(true);
+      expect(sample).toBe(0);
+    });
+
+    it("buckets domains by rank and computes shares over the sampled total", () => {
+      const { rows, sample } = __test.buildAuthorityDistribution([
+        { domain: "a.com", rank: 95 },
+        { domain: "b.com", rank: 95 },
+        { domain: "c.com", rank: 5 },
+        { domain: "d.com", rank: null },
+      ] satisfies ReferringDomainItem[]);
+      expect(sample).toBe(3);
+      const top = rows.find((r) => r.range === "91 - 100");
+      const bottom = rows.find((r) => r.range === "0 - 10");
+      expect(top?.count).toBe(2);
+      expect(top?.share).toBeCloseTo(2 / 3);
+      expect(bottom?.count).toBe(1);
+    });
   });
 });

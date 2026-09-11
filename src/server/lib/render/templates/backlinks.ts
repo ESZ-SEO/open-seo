@@ -1,8 +1,9 @@
-/* eslint-disable max-lines, max-lines-per-function -- Backlinks template mirrors the spec's 5-tile + 7-chart + 4-table layout; splitting would fragment the visual structure across files and lose the local narrative of the section grid. */
+/* eslint-disable max-lines, max-lines-per-function -- The Backlinks template is one page narrative: shell, KPI strip, authority row, two history grids, two breakdown grids. Splitting it across files scatters the composition and the height budget that ties the regions together. */
 import type { ReportKind } from "@/server/lib/render/cache";
 import type {
   AnchorRow,
   AttributeRow,
+  AuthorityBucketRow,
   BacklinksReportData,
   CategoryRow,
   TypeRow,
@@ -10,43 +11,53 @@ import type {
 import {
   placeholderSvg,
   renderAreaChart,
-  renderBarPairChart,
+  renderAuthorityProfile,
+  renderDivergingBarChart,
   renderLineChart,
-  renderNetworkGraph,
-  renderRadarChart,
+  renderOrganicNetworkGraph,
+  renderWordCloud,
 } from "@/server/lib/render/charts/charts";
 
 /**
- * Backlinks report template (E1).
+ * Backlink Analytics report template.
  *
- * Self-contained HTML sent to a headless browser for screenshotting, mirroring
- * the structure of `templates/shell.ts` (inline `<style>`, no external CSS,
- * brand palette, lucide-style inline SVG icons). Follows spec §6.2:
+ * Self-contained HTML handed to the Puppeteer renderer, which screenshots it
+ * once at a fixed 1280px width. Composition follows the parity pack in
+ * `.dev/designer/semrush-backlinks-ui-parity-pack-2026-09-11/` as re-read
+ * through `.dev/specs/backlinks-parity-interpretation.md`, and reuses the
+ * design system measured for Domain Overview
+ * (`.dev/specs/render-reports-design-playbook.md` §1).
  *
- *   - 5 tiles: Autoridad · Backlinks · Tráfico orgánico · Dominios de
- *     referencia · Toxicidad (the 6th tile from §Anexo A.3, "Visitas
- *     mensuales", is marked ❌ omitted — no DataForSEO equivalent).
- *   - 7 charts: radar autoridad · tendencia autoridad · grafo de red · área
- *     dominios de referencia · área backlinks · barras new/lost dominios ·
- *     barras new/lost backlinks.
- *   - 4 tables: categorías (ref domains) · tipos de backlink · atributos de
- *     enlace · top anchors.
+ * Page regions, top to bottom:
  *
- * Each top-level group has its own card-style container so the page survives
- * at the renderer screenshot width (1280px) without squeezing anything.
+ *   1. Shell (~190px): query bar, breadcrumb + help links, title + export,
+ *      tab strip, competitor comparison row.
+ *   2. KPI strip (~80px): ONE white surface, six cells split by vertical
+ *      hairlines — not six cards. Referring Domains and Backlinks carry a
+ *      delta derived from the history window; Monthly Visits and Outbound
+ *      Domains have no source in DataForSEO and render a neutral `n/a`
+ *      without giving up their cell.
+ *   3. Authority row (~300px): three equal-height cards — Authority Score
+ *      (score + badge + 3-axis profile), Authority Score Trend, Network Graph.
+ *   4. Two 50/50 history grids: Referring Domains / Backlinks as areas, then
+ *      New and Lost for each as diverging bars around zero.
+ *   5. Two 50/50 breakdown grids: Categories / Top Anchors, then Referring
+ *      Domains by Authority Score / a combined Backlink Types + Link
+ *      Attributes card.
+ *
+ * **Static-render caveat.** The output is a PNG. The query bar, tabs, range
+ * pills, legend checkboxes and buttons are markup shaped like controls,
+ * rendered in one already-chosen state. There is no script, no hover, no
+ * media query and no external resource anywhere in the document; "tooltips"
+ * are `title` attributes.
+ *
+ * **Degraded state is a first-class case.** Every module keeps its geometry
+ * when its source fails: charts fall back to a placeholder drawn at the same
+ * canvas size, bar-row lists fall back to the same number of skeleton rows,
+ * and every card carries a `min-height`. Rendering the whole page with every
+ * source in error must not change the page height (`pnpm preview:backlinks
+ * --degraded` exists to check exactly that).
  */
-
-const REPORT_TITLES: Record<ReportKind, string> = {
-  backlinks: "Informe de backlinks",
-  competitors: "Comparación de dominios",
-  overview: "Visión general del dominio",
-};
-
-const DEVICE_LABELS: Record<string, string> = {
-  desktop: "Escritorio",
-  mobile: "Móvil",
-  tablet: "Tablet",
-};
 
 export type BacklinksTemplateInput = {
   report: ReportKind;
@@ -65,454 +76,1078 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const PERCENT_FMT = new Intl.NumberFormat("es-ES", {
-  style: "percent",
-  maximumFractionDigits: 1,
-});
+/* ----------------------------- Palette ----------------------------- */
 
-const NUMBER_FMT = new Intl.NumberFormat("es-ES", {
-  maximumFractionDigits: 1,
-});
+/**
+ * Colour tokens, in TypeScript rather than only in the `:root` block.
+ *
+ * Half of them are consumed outside CSS — every chart in this report is an
+ * SVG string built by `charts.tsx` from literal colours passed in from here.
+ * A token that only exists in the stylesheet silently leaves the charts on
+ * the old palette, which is how the original blue survived the first repaint
+ * of Domain Overview (playbook §1).
+ *
+ * `charts.tsx` keeps its own default `PALETTE`; it is shared with the
+ * Competitors report, which this work does not restyle. Nothing below is
+ * pushed into it — every colour travels as an explicit argument.
+ */
+const COLORS = {
+  /** Near-black body ink. Measured, not inferred: text is not navy. */
+  ink: "#202020",
+  muted: "#6b7280",
+  /** Periwinkle. KPI values, active states, primary series, counts. */
+  accent: "#6868d8",
+  /** Cool lavender: the fill of a selected control. */
+  lavender: "#e6e9fc",
+  /** Warm lavender: tags and badges sitting on a white card. */
+  lavenderWarm: "#eae5fe",
+  /** Teal, deliberately not green — green stays reserved for a semantic
+   *  positive. Carries the authority profile and the Follow attribute. */
+  mint: "#14b8a6",
+  /** Pale mint for the semantic badge pill. */
+  mintSoft: "#d7f6ee",
+  /** Loss. The one token the parity audit contributed that the playbook had
+   *  no equivalent for: the Lost series below the zero baseline. */
+  coral: "#ff6b70",
+  /** A semantic positive delta, and only that. */
+  positive: "#16a34a",
+  /** Unfilled bar track. */
+  track: "#eeeff0",
+  border: "#eeeff0",
+  /** Darker than the divider: the edge of something shaped like a control. */
+  controlBorder: "#d6d8dc",
+} as const;
 
-function fmtNumber(value: number | null): string {
-  return value == null ? "—" : NUMBER_FMT.format(value);
+/**
+ * The periwinkle ramp for "Referring Domains by Authority Score": most
+ * saturated where the domains actually pile up, pale lavender down the tail.
+ * The buckets are a *distribution*, so the colour has to encode concentration
+ * — ten unrelated hues would read as ten categories.
+ */
+const AUTHORITY_RAMP = [
+  "#eceefb",
+  "#c9cef5",
+  "#a2a8ec",
+  "#8085e2",
+  "#5a5ad3",
+] as const;
+
+/** Square-rooted so the long tail still separates: a linear ramp against a
+ *  bucket holding half the domains flattens the other nine to the palest
+ *  step. */
+function authorityRampColor(share: number, maxShare: number): string {
+  if (maxShare <= 0) return AUTHORITY_RAMP[0];
+  const step = Math.min(
+    AUTHORITY_RAMP.length - 1,
+    Math.round(Math.sqrt(Math.max(0, share) / maxShare) * 4),
+  );
+  return AUTHORITY_RAMP[step] ?? AUTHORITY_RAMP[0];
 }
 
-function fmtPercent(value: number): string {
-  return PERCENT_FMT.format(value);
-}
-
-function truncateDomain(input: string, max = 36): string {
-  return input.length <= max ? input : `${input.slice(0, max - 1)}…`;
-}
-
-/* ---------- tile renderers ---------- */
-
-type Tile = {
-  label: string;
-  value: string;
-  sub: string;
-  icon: string;
-  warning?: boolean;
-};
+/* ----------------------------- Icons ----------------------------- */
 
 const ICONS = {
-  authority: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"></path></svg>`,
-  backlinks: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg>`,
-  traffic: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"></path><path d="M17 7h4v4"></path></svg>`,
-  domains: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path></svg>`,
-  toxicity: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l10 18H2z"></path><path d="M12 10v5M12 18v.5"></path></svg>`,
+  info: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4M12 8h.01"></path></svg>`,
+  external: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>`,
+  chevron: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>`,
+  upload: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"></path></svg>`,
+  book: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"></path><path d="M9 3v18"></path></svg>`,
+  flag: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4h9l-1 3h7v9h-8l-1-3H5"></path></svg>`,
+  check: `<svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 5 5 9-11"></path></svg>`,
+  dots: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7"></circle></svg>`,
+} as const;
+
+/* ----------------------------- Formatting ----------------------------- */
+
+const NUMBER_FMT = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+});
+
+/** The cell exists but no source behind it reports the number. Neutral grey,
+ *  never an alarm colour: six red tiles say "this is broken", not "nobody
+ *  publishes this figure" (playbook §3). */
+const EMPTY_VALUE = "n/a";
+
+const COMPACT_UNITS = [
+  { at: 1e9, suffix: "B" },
+  { at: 1e6, suffix: "M" },
+  { at: 1e3, suffix: "K" },
+] as const;
+
+/** `1,800,000` to `1.8M`. Every figure on this page is abbreviated the way
+ *  the reference reads it; the exact number survives on the `title`. */
+function fmtCompact(value: number | null): string {
+  if (value == null) return EMPTY_VALUE;
+  const abs = Math.abs(value);
+  const unit = COMPACT_UNITS.find((u) => abs >= u.at);
+  if (unit === undefined) return NUMBER_FMT.format(value);
+  return `${(value / unit.at).toFixed(1).replace(/\.0$/, "")}${unit.suffix}`;
+}
+
+function fmtNumber(value: number | null): string {
+  return value == null ? EMPTY_VALUE : NUMBER_FMT.format(value);
+}
+
+/**
+ * A share as a whole percent, with a `<1%` floor.
+ *
+ * Rounding a real 0.04% down to a flat `0%` is the one rounding that changes
+ * the claim: it says the bucket is empty when it isn't.
+ */
+function fmtShare(share: number): string {
+  if (!Number.isFinite(share) || share <= 0) return "0%";
+  const pct = share * 100;
+  if (pct < 1) return "&lt;1%";
+  return `${Math.round(pct)}%`;
+}
+
+/** Signed, with a true minus sign, and coloured only as a secondary cue —
+ *  the sign carries the meaning on its own. */
+function fmtDelta(value: number | null): string {
+  if (value == null) return "";
+  const pct = Math.round(Math.abs(value) * 100);
+  if (pct === 0) return "";
+  const sign = value > 0 ? "+" : "−";
+  const tone = value > 0 ? "kpi-delta--up" : "kpi-delta--down";
+  return `<span class="kpi-delta ${tone}">${sign}${pct}%</span>`;
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * "Last 12 weeks" — from the data, never from the reference.
+ *
+ * The cadence is inferred from the gap between the first two samples rather
+ * than assumed, because this template cannot know what window the service
+ * asked DataForSEO for, and the one thing it must not do is inherit the
+ * reference's "Last 12 months" caption over a quarter of weekly samples.
+ *
+ * `mode` distinguishes a *series*, where n samples span n−1 intervals, from
+ * *bars*, where each sample is one completed period.
+ */
+function historyWindowLabel(dates: string[], mode: "bars" | "series"): string {
+  if (dates.length < 2) return "";
+  const first = Date.parse(dates[0] ?? "");
+  const second = Date.parse(dates[1] ?? "");
+  if (Number.isNaN(first) || Number.isNaN(second)) return "";
+  const stepDays = Math.abs(second - first) / MS_PER_DAY;
+  const count = mode === "bars" ? dates.length : dates.length - 1;
+  if (count <= 0) return "";
+  if (stepDays >= 28) return `Last ${Math.round(count)} months`;
+  if (stepDays >= 6) return `Last ${Math.round(count)} weeks`;
+  return `Last ${Math.round(count)} days`;
+}
+
+/**
+ * The same window as a range pill: `12W`, `18M`, `30D`.
+ *
+ * The reference labels this pill `1Y`. Ours says what the series behind it
+ * actually covers, because the pill sits directly above the chart and a
+ * reader takes it as the chart's x-range — printing `1Y` over a quarter of
+ * weekly samples is the same fabrication as printing an invented number,
+ * just in the axis instead of the cell.
+ */
+function shortWindowLabel(dates: string[]): string {
+  const full = historyWindowLabel(dates, "series");
+  const match = /^Last (\d+) (days|weeks|months)$/.exec(full);
+  if (match === null) return "—";
+  const unit = { days: "D", weeks: "W", months: "M" }[match[2] ?? "days"];
+  return `${match[1]}${unit}`;
+}
+
+/* ----------------------------- KPI strip ----------------------------- */
+
+type Kpi = {
+  label: string;
+  value: string;
+  /** Exact figure or the reason there isn't one, on the cell's `title`. */
+  hint: string;
+  delta?: number | null;
 };
 
-function renderTiles(
-  data: BacklinksReportData["tiles"],
-  tiles: Tile[],
-): string {
-  return tiles
+/**
+ * Six cells on one surface, divided by hairlines.
+ *
+ * A cell whose source reports nothing keeps its slot and shows `n/a` in the
+ * muted ink. Dropping it would collapse the strip to five, which is the
+ * composition this report is moving away from.
+ */
+function renderKpiStrip(kpis: Kpi[]): string {
+  const cells = kpis
     .map(
-      (t) => `
-    <div class="tile ${t.warning ? "tile-warn" : ""}">
-      <div class="tile-label">${t.icon}${escapeHtml(t.label)}</div>
-      <div class="tile-value">${escapeHtml(t.value)}</div>
-      <div class="tile-sub">${escapeHtml(t.sub)}</div>
-    </div>`,
+      (k) => `
+      <div class="kpi" title="${escapeHtml(k.hint)}">
+        <div class="kpi-label">${escapeHtml(k.label)}<span class="kpi-info">${ICONS.info}</span></div>
+        <div class="kpi-value${k.value === EMPTY_VALUE ? " kpi-value--empty" : ""}">${escapeHtml(k.value)}${fmtDelta(k.delta ?? null)}</div>
+      </div>`,
     )
+    .join("");
+  return `<div class="card kpis">${cells}</div>`;
+}
+
+/* ----------------------------- Bar rows ----------------------------- */
+
+/**
+ * Categories, the authority distribution, backlink types and link attributes
+ * are one row primitive rendered four times, not four tables.
+ *
+ * Two layouts, because the reference uses two and they are the same row:
+ *   - `inline`: label, track, %, count on one line — the dense lists.
+ *   - `stacked`: label and figures on one line with a full-width track
+ *     beneath — the Categories block, whose labels are long enough that an
+ *     inline track would be squeezed to nothing.
+ *
+ * HTML and CSS rather than SVG: the text renders with real font hinting and
+ * the columns align with the rest of the card for free.
+ *
+ * The fill is the share itself, not the share normalised against the largest
+ * row. A normalised bar makes the biggest row full-width whatever it holds,
+ * so a 6% leader would look like the whole market.
+ */
+type BarRowInput = {
+  label: string;
+  share: number;
+  count: number;
+  color: string;
+  hint: string;
+};
+
+/** Sub-1% rows still get a visible sliver: a row drawn at zero width reads as
+ *  a row with no data rather than a row with very little. */
+const MIN_FILL_PERCENT = 0.5;
+
+function renderBarRows(
+  rows: BarRowInput[],
+  layout: "inline" | "stacked",
+): string {
+  return rows
+    .map((r) => {
+      const width = Math.max(
+        MIN_FILL_PERCENT,
+        Math.min(100, r.share * 100),
+      ).toFixed(1);
+      const track = `<span class="brow-track"><span class="brow-fill" style="width:${width}%;background:${r.color}"></span></span>`;
+      if (layout === "stacked") {
+        return `
+        <div class="brow brow--stacked" title="${escapeHtml(r.hint)}">
+          <div class="brow-head">
+            <span class="brow-label">${escapeHtml(r.label)}</span>
+            <span class="brow-nums"><span class="brow-share">${fmtShare(r.share)}</span><span class="brow-count">${fmtCompact(r.count)}</span></span>
+          </div>
+          ${track}
+        </div>`;
+      }
+      return `
+        <div class="brow brow--inline" title="${escapeHtml(r.hint)}">
+          <span class="brow-label">${escapeHtml(r.label)}</span>
+          ${track}
+          <span class="brow-share">${fmtShare(r.share)}</span>
+          <span class="brow-count">${fmtCompact(r.count)}</span>
+        </div>`;
+    })
     .join("");
 }
 
-/* ---------- table helpers ---------- */
+/**
+ * The same rows with nothing in them.
+ *
+ * `count` is the number of rows the populated module budgets, so a failed
+ * source costs the page exactly zero pixels of height.
+ */
+function placeholderBarRows(
+  count: number,
+  layout: "inline" | "stacked",
+): string {
+  const dash = "—";
+  return Array.from({ length: count }, () => {
+    const track = `<span class="brow-track"></span>`;
+    if (layout === "stacked") {
+      return `
+        <div class="brow brow--stacked">
+          <div class="brow-head">
+            <span class="brow-label muted">${dash}</span>
+            <span class="brow-nums"><span class="brow-share muted">${dash}</span><span class="brow-count muted">${dash}</span></span>
+          </div>
+          ${track}
+        </div>`;
+    }
+    return `
+        <div class="brow brow--inline">
+          <span class="brow-label muted">${dash}</span>
+          ${track}
+          <span class="brow-share muted">${dash}</span>
+          <span class="brow-count muted">${dash}</span>
+        </div>`;
+  }).join("");
+}
 
-function tableShell(
+/* ----------------------------- Card chrome ----------------------------- */
+
+function cardHead(title: string, aside = ""): string {
+  return `
+      <div class="card-head">
+        <h3>${escapeHtml(title)}<span class="card-info">${ICONS.info}</span></h3>
+        ${aside}
+      </div>`;
+}
+
+const CTA = `<span class="btn-dark">View full report</span>`;
+
+/* ----------------------------- Chart canvases ----------------------------- */
+
+/**
+ * Authoring sizes for the SVG canvases, derived from the real column widths
+ * at the 1280px render: 1280 shell − 36 body padding = 1244; a half column is
+ * (1244 − 12) / 2 = 616 outer, 584 inner; a third is (1244 − 24) / 3 = 406
+ * outer, 374 inner. The SVGs are then scaled with `width:100%; height:auto`,
+ * which keeps their text at the size it was authored at instead of stretching
+ * a smaller canvas.
+ *
+ * Every degraded fallback is drawn at the *same* size, so a failed source
+ * cannot move anything below it.
+ */
+const THIRD_W = 374;
+const HALF_W = 584;
+const PROFILE_H = 200;
+const TREND_H = 200;
+const GRAPH_H = 172;
+const AREA_H = 190;
+const BARS_H = 172;
+const CLOUD_H = 262;
+
+/** Row counts each module budgets, and the number of skeleton rows its
+ *  degraded state draws. */
+const CATEGORY_ROWS = 5;
+const AUTHORITY_BUCKET_ROWS = 10;
+const BREAKDOWN_ROWS = 4;
+const ANCHOR_WORDS = 12;
+
+function noData(width: number, height: number): string {
+  return placeholderSvg("No data", { width, height });
+}
+
+/* ----------------------------- Modules ----------------------------- */
+
+function renderAuthorityCard(
+  profile: BacklinksReportData["charts"]["authorityProfile"],
+): string {
+  const { score, badge, axes } = profile.value;
+  const drawable = profile.source === "ok" && axes.length > 0;
+  const chart = drawable
+    ? renderAuthorityProfile(axes, {
+        width: THIRD_W,
+        height: PROFILE_H,
+        stroke: COLORS.mint,
+        fill: "rgba(20,184,166,0.16)",
+        muted: COLORS.muted,
+      })
+    : noData(THIRD_W, PROFILE_H);
+
+  return `
+    <div class="card card-auth">
+      ${cardHead("Authority Score")}
+      <div class="auth-score">
+        <span class="auth-value${score == null ? " auth-value--empty" : ""}">${score == null ? EMPTY_VALUE : String(score)}</span>
+        ${badge == null ? "" : `<span class="badge-mint">${escapeHtml(badge)}</span>`}
+      </div>
+      <div class="chart">${chart}</div>
+    </div>`;
+}
+
+function renderTrendCard(
+  trend: BacklinksReportData["charts"]["authorityTrend"],
+): string {
+  const points = trend.value.points;
+  const drawable =
+    trend.source === "ok" && points.filter((p) => p.value != null).length >= 2;
+  const chart = drawable
+    ? renderLineChart(points, {
+        width: THIRD_W,
+        height: TREND_H,
+        color: COLORS.accent,
+        // The metric is bounded 0-100, so the axis is too. Left to scale
+        // itself, a flat 73-75 series zooms into its own noise and reads as
+        // if it swung across the whole plot.
+        domain: [0, 100],
+        dateFormat: "monthYear",
+      })
+    : noData(THIRD_W, TREND_H);
+  const window = drawable
+    ? historyWindowLabel(
+        points.map((p) => p.date),
+        "series",
+      )
+    : "";
+
+  return `
+    <div class="card card-auth">
+      ${cardHead("Authority Score Trend")}
+      <div class="caption-right">${escapeHtml(window)}</div>
+      <div class="chart">${chart}</div>
+    </div>`;
+}
+
+function renderGraphCard(
+  domain: string,
+  graph: BacklinksReportData["charts"]["networkGraph"],
+): string {
+  const { nodes, links } = graph.value;
+  const drawable = graph.source === "ok" && nodes.length > 1;
+  const chart = drawable
+    ? renderOrganicNetworkGraph(domain, nodes, links, {
+        width: THIRD_W,
+        height: GRAPH_H,
+        nodeColor: "#c6cbd3",
+        highlightColor: COLORS.mint,
+        linkColor: "#dcdfe5",
+        labelColor: COLORS.accent,
+      })
+    : noData(THIRD_W, GRAPH_H);
+
+  return `
+    <div class="card card-auth">
+      ${cardHead("Network Graph")}
+      <div class="auth-score">
+        ${drawable ? `<span class="badge-mint">Reputable</span>` : ""}
+      </div>
+      <div class="chart">${chart}</div>
+      ${CTA}
+    </div>`;
+}
+
+/** Both history areas draw in the same translucent periwinkle. They measure
+ *  two different things about the same link graph; giving each its own hue
+ *  invited a comparison between the two panels that neither supports. */
+function renderAreaCard(
   title: string,
-  head: string[],
-  rowsHtml: string,
-  empty: string,
+  series: BacklinksReportData["charts"]["referringDomainsArea"],
 ): string {
+  const points = series.value.points;
+  const drawable =
+    series.source === "ok" && points.filter((p) => p.value != null).length >= 2;
+  const chart = drawable
+    ? renderAreaChart(points, {
+        width: HALF_W,
+        height: AREA_H,
+        stroke: COLORS.accent,
+        fill: "rgba(104,104,216,0.18)",
+        dateFormat: "monthYear",
+      })
+    : noData(HALF_W, AREA_H);
+
+  const range = drawable ? shortWindowLabel(points.map((p) => p.date)) : "—";
+
   return `
-    <div class="card">
-      <div class="card-head">
-        <h3>${escapeHtml(title)}</h3>
-        <span class="muted">Informe completo ›</span>
-      </div>
-      <table class="data">
-        <thead><tr>${head.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
-        <tbody>${rowsHtml || `<tr><td colspan="${head.length}" class="muted center">${escapeHtml(empty)}</td></tr>`}</tbody>
-      </table>
+    <div class="card card-history">
+      ${cardHead(title)}
+      <div class="range"><span class="active">${escapeHtml(range)}</span><span>All Time</span></div>
+      <div class="chart">${chart}</div>
     </div>`;
 }
 
-function categoryRows(rows: CategoryRow[]): string {
-  return rows
-    .map(
-      (r) => `<tr>
-        <td>${escapeHtml(r.category)}</td>
-        <td class="num">${fmtNumber(r.count)}</td>
-        <td class="num">${fmtPercent(r.share)}</td>
-      </tr>`,
-    )
-    .join("");
-}
+/** The legend is drawn, always ticked, and pinned to a fixed height: it is a
+ *  key, not a control, and nothing about it may move the module. */
+const NEW_LOST_LEGEND = `
+      <div class="legend">
+        <span class="legend-item"><span class="cbox" style="background:${COLORS.accent}">${ICONS.check}</span>New</span>
+        <span class="legend-item"><span class="cbox" style="background:${COLORS.coral}">${ICONS.check}</span>Lost</span>
+      </div>`;
 
-function typeRows(rows: TypeRow[]): string {
-  return rows
-    .map(
-      (r) => `<tr>
-        <td>${escapeHtml(r.type)}</td>
-        <td class="num">${fmtNumber(r.count)}</td>
-        <td class="num">${fmtPercent(r.share)}</td>
-      </tr>`,
-    )
-    .join("");
-}
+function renderNewLostCard(
+  title: string,
+  series: BacklinksReportData["charts"]["referringDomainsBars"],
+): string {
+  const points = series.value.points;
+  const drawable = series.source === "ok" && points.length > 0;
+  const chart = drawable
+    ? renderDivergingBarChart(points, {
+        width: HALF_W,
+        height: BARS_H,
+        newColor: COLORS.accent,
+        lostColor: COLORS.coral,
+        grid: COLORS.border,
+        muted: COLORS.muted,
+        dateFormat: "monthDay",
+      })
+    : noData(HALF_W, BARS_H);
+  const window = drawable
+    ? historyWindowLabel(
+        points.map((p) => p.date),
+        "bars",
+      )
+    : "";
 
-function attributeRows(rows: AttributeRow[]): string {
-  return rows
-    .map(
-      (r) => `<tr>
-        <td>${escapeHtml(r.attribute)}</td>
-        <td class="num">${fmtNumber(r.count)}</td>
-        <td class="num">${fmtPercent(r.share)}</td>
-      </tr>`,
-    )
-    .join("");
-}
-
-function anchorRows(rows: AnchorRow[]): string {
-  return rows
-    .map(
-      (r) => `<tr>
-        <td class="anchor">${escapeHtml(truncateDomain(r.anchor, 60))}</td>
-        <td class="num">${fmtNumber(r.backlinks)}</td>
-        <td class="num">${fmtNumber(r.domains)}</td>
-      </tr>`,
-    )
-    .join("");
-}
-
-/* ---------- chart helpers ---------- */
-
-function chartCard(title: string, sub: string, body: string): string {
   return `
-    <div class="card chart">
-      <div class="card-head">
-        <h3>${escapeHtml(title)}</h3>
-        <span class="muted">${escapeHtml(sub)}</span>
+    <div class="card card-flow">
+      ${cardHead(title)}
+      <div class="flow-head">
+        ${NEW_LOST_LEGEND}
+        <span class="caption">${escapeHtml(window)}</span>
       </div>
-      <div class="chart-body">${body}</div>
+      <div class="chart">${chart}</div>
+      ${CTA}
     </div>`;
 }
 
-/* ---------- top-level template ---------- */
+/**
+ * Categories of Referring Domains.
+ *
+ * The reference groups these by industry. DataForSEO publishes no industry
+ * classification for a referring domain, so the service groups by whatever
+ * dimension it actually has (TLD today) and reports which one in
+ * `categoriesDimension`. The subtitle names it rather than letting the card
+ * title imply a taxonomy we do not have — the visualisation is the part of
+ * the reference worth copying, the row labels are its data.
+ */
+function renderCategoriesCard(
+  categories: BacklinksReportData["tables"]["categories"],
+  dimension: string,
+): string {
+  const all = categories.source === "ok" ? categories.value : [];
+  const shown = all.slice(0, CATEGORY_ROWS);
+  const rows =
+    shown.length > 0
+      ? renderBarRows(
+          shown.map((c: CategoryRow) => ({
+            label: c.category,
+            share: c.share,
+            count: c.count,
+            color: COLORS.accent,
+            hint: `${c.category} · ${NUMBER_FMT.format(c.count)} referring domains`,
+          })),
+          "stacked",
+        )
+      : placeholderBarRows(CATEGORY_ROWS, "stacked");
+
+  const truncated =
+    all.length > shown.length ? ` · top ${shown.length} of ${all.length}` : "";
+
+  return `
+    <div class="card card-breakdown">
+      ${cardHead("Categories of Referring Domains")}
+      <div class="card-sub">Grouped by ${escapeHtml(dimension)}${escapeHtml(truncated)}</div>
+      <div class="brows">${rows}</div>
+      ${CTA}
+    </div>`;
+}
+
+function renderAnchorsCard(
+  anchors: BacklinksReportData["tables"]["topAnchors"],
+): string {
+  const rows = anchors.source === "ok" ? anchors.value : [];
+  const drawable = rows.length > 0;
+  const cloud = drawable
+    ? renderWordCloud(
+        rows.slice(0, ANCHOR_WORDS).map((a: AnchorRow) => ({
+          text: a.anchor,
+          weight: a.backlinks,
+          title: `${a.anchor} — ${NUMBER_FMT.format(a.backlinks)} backlinks from ${NUMBER_FMT.format(a.domains)} domains`,
+        })),
+        { width: HALF_W, height: CLOUD_H, color: COLORS.accent },
+      )
+    : noData(HALF_W, CLOUD_H);
+
+  return `
+    <div class="card card-breakdown">
+      ${cardHead("Top Anchors")}
+      <div class="chart chart--cloud">${cloud}</div>
+      ${CTA}
+    </div>`;
+}
+
+/**
+ * Referring Domains by Authority Score.
+ *
+ * The buckets come from the `rank` of the referring domains the service
+ * actually pulled, which is a sample and not the whole link graph. The
+ * subtitle says so: a distribution built from the highest-ranked slice skews
+ * upward, and a reader who can't see the sample size has no way to know.
+ */
+function renderAuthorityDistributionCard(
+  distribution: BacklinksReportData["tables"]["authorityDistribution"],
+  sample: number,
+): string {
+  const buckets = distribution.source === "ok" ? distribution.value : [];
+  const maxShare = buckets.reduce(
+    (acc: number, b: AuthorityBucketRow) => Math.max(acc, b.share),
+    0,
+  );
+  const rows =
+    buckets.length > 0
+      ? renderBarRows(
+          buckets.map((b: AuthorityBucketRow) => ({
+            label: b.range,
+            share: b.share,
+            count: b.count,
+            color: authorityRampColor(b.share, maxShare),
+            hint: `Authority ${b.range} · ${NUMBER_FMT.format(b.count)} referring domains`,
+          })),
+          "inline",
+        )
+      : placeholderBarRows(AUTHORITY_BUCKET_ROWS, "inline");
+
+  const scope =
+    sample > 0
+      ? `Based on the top ${NUMBER_FMT.format(sample)} referring domains`
+      : "No referring domains sampled";
+
+  return `
+    <div class="card card-breakdown">
+      ${cardHead("Referring Domains by Authority Score")}
+      <div class="card-sub">${escapeHtml(scope)}</div>
+      <div class="brows brows--buckets">${rows}</div>
+      ${CTA}
+    </div>`;
+}
+
+/**
+ * Backlink Types and Link Attributes, one card with an internal divider.
+ *
+ * Both lists render the rows DataForSEO returned and nothing else. The
+ * reference happens to show Form and Frame for its own domain; adding
+ * zero rows to match it would be inventing four measurements.
+ */
+function renderBreakdownCard(
+  types: BacklinksReportData["tables"]["types"],
+  attributes: BacklinksReportData["tables"]["attributes"],
+): string {
+  const typeRows = types.source === "ok" ? types.value : [];
+  const attrRows = attributes.source === "ok" ? attributes.value : [];
+
+  const typesHtml =
+    typeRows.length > 0
+      ? renderBarRows(
+          typeRows.map((t: TypeRow) => ({
+            label: t.type,
+            share: t.share,
+            count: t.count,
+            color: COLORS.accent,
+            hint: `${t.type} · ${NUMBER_FMT.format(t.count)} backlinks`,
+          })),
+          "inline",
+        )
+      : placeholderBarRows(BREAKDOWN_ROWS, "inline");
+
+  // Follow is the one row with a semantic reading — a followed link is the
+  // one that passes authority — so it takes the mint the rest of the report
+  // reserves for a positive.
+  const attrsHtml =
+    attrRows.length > 0
+      ? renderBarRows(
+          attrRows.map((a: AttributeRow) => ({
+            label: a.attribute,
+            share: a.share,
+            count: a.count,
+            color:
+              a.attribute.toLowerCase() === "follow"
+                ? COLORS.mint
+                : COLORS.accent,
+            hint: `${a.attribute} · ${NUMBER_FMT.format(a.count)} backlinks`,
+          })),
+          "inline",
+        )
+      : placeholderBarRows(BREAKDOWN_ROWS, "inline");
+
+  return `
+    <div class="card card-breakdown">
+      ${cardHead("Backlink Types")}
+      <div class="brows brows--breakdown">${typesHtml}</div>
+      <div class="split"></div>
+      ${cardHead("Link Attributes")}
+      <div class="brows brows--breakdown">${attrsHtml}</div>
+    </div>`;
+}
+
+/* ----------------------------- Top level ----------------------------- */
 
 export function renderBacklinksReport({
-  report,
   domain,
-  country,
-  device,
   data,
 }: BacklinksTemplateInput): string {
-  const title = REPORT_TITLES[report];
-  const deviceLabel = DEVICE_LABELS[device] ?? device;
-  const tiles: Tile[] = [
+  const t = data.tiles;
+
+  const kpis: Kpi[] = [
     {
-      label: "Puntuación de autoridad",
-      value:
-        data.tiles.authority.source === "ok"
-          ? String(data.tiles.authority.value)
-          : "—",
-      sub: `composición: rank ${data.tiles.authorityComposition.rank ?? "—"}${
-        data.tiles.authorityComposition.spamPenalty > 0
-          ? ` · −${data.tiles.authorityComposition.spamPenalty} spam`
-          : ""
-      }`,
-      icon: ICONS.authority,
+      label: "Referring Domains",
+      value: fmtCompact(t.referringDomains.value),
+      hint:
+        t.referringDomains.value == null
+          ? "No data for this period"
+          : `${fmtNumber(t.referringDomains.value)} referring domains`,
+      delta: t.deltas.referringDomains,
     },
     {
       label: "Backlinks",
-      value: fmtNumber(data.tiles.backlinks.value),
-      sub:
-        data.tiles.backlinks.source === "error"
-          ? "datos no disponibles"
-          : "totales registrados por DataForSEO",
-      icon: ICONS.backlinks,
-      warning: data.tiles.backlinks.source === "error",
+      value: fmtCompact(t.backlinks.value),
+      hint:
+        t.backlinks.value == null
+          ? "No data for this period"
+          : `${fmtNumber(t.backlinks.value)} backlinks`,
+      delta: t.deltas.backlinks,
     },
     {
-      label: "Tráfico orgánico",
-      value: fmtNumber(data.tiles.organicTraffic.value),
-      sub:
-        data.tiles.organicTraffic.source === "error"
-          ? "datos no disponibles"
-          : "estimación mensual (Labs)",
-      icon: ICONS.traffic,
-      warning: data.tiles.organicTraffic.source === "error",
+      label: "Monthly Visits",
+      value: fmtCompact(t.monthlyVisits.value),
+      hint:
+        t.monthlyVisits.value == null
+          ? "No source reports monthly visits for this domain"
+          : `${fmtNumber(t.monthlyVisits.value)} monthly visits`,
     },
     {
-      label: "Dominios de referencia",
-      value: fmtNumber(data.tiles.referringDomains.value),
-      sub:
-        data.tiles.referringDomains.source === "error"
-          ? "datos no disponibles"
-          : "medidos en el último barrido",
-      icon: ICONS.domains,
-      warning: data.tiles.referringDomains.source === "error",
+      label: "Organic Traffic",
+      value: fmtCompact(t.organicTraffic.value),
+      hint:
+        t.organicTraffic.value == null
+          ? "No data for this period"
+          : `${fmtNumber(t.organicTraffic.value)} estimated monthly visits`,
     },
     {
-      label: "Toxicidad",
+      label: "Outbound Domains",
+      value: fmtCompact(t.outboundDomains.value),
+      hint:
+        t.outboundDomains.value == null
+          ? "No source reports outbound domains for this domain"
+          : `${fmtNumber(t.outboundDomains.value)} outbound domains`,
+    },
+    {
+      label: "Overall Toxicity Score",
       value:
-        data.tiles.toxicity.value != null
-          ? `${Math.round(data.tiles.toxicity.value)}%`
-          : "—",
-      sub:
-        data.tiles.toxicity.source === "empty"
-          ? "no se ha podido medir"
-          : "spam score del dominio objetivo",
-      icon: ICONS.toxicity,
-      warning: data.tiles.toxicity.source === "error",
+        t.toxicity.value == null
+          ? EMPTY_VALUE
+          : String(Math.round(t.toxicity.value)),
+      hint:
+        t.toxicity.value == null
+          ? "No data for this period"
+          : `Spam score of the target domain, 0-100`,
     },
   ];
 
-  const radarSvg =
-    data.charts.authorityRadar.source === "ok"
-      ? renderRadarChart(data.charts.authorityRadar.value.axes, {
-          width: 320,
-          height: 280,
-        })
-      : placeholderSvg("Sin datos");
-
-  const trendSvg =
-    data.charts.authorityTrend.source === "ok"
-      ? renderLineChart(data.charts.authorityTrend.value.points, {
-          width: 480,
-          height: 200,
-          color: "#1f6feb",
-        })
-      : placeholderSvg("Sin histórico");
-
-  const networkSvg =
-    data.charts.networkGraph.source === "ok"
-      ? renderNetworkGraph(
-          data.input.domain,
-          data.charts.networkGraph.value.nodes,
-          data.charts.networkGraph.value.links,
-          { width: 480, height: 280 },
-        )
-      : placeholderSvg("Sin dominios de referencia");
-
-  const refAreaSvg =
-    data.charts.referringDomainsArea.source === "ok"
-      ? renderAreaChart(data.charts.referringDomainsArea.value.points, {
-          width: 480,
-          height: 200,
-          stroke: "#14b8a6",
-          fill: "#14b8a633",
-        })
-      : placeholderSvg("Sin histórico");
-
-  const blAreaSvg =
-    data.charts.backlinksArea.source === "ok"
-      ? renderAreaChart(data.charts.backlinksArea.value.points, {
-          width: 480,
-          height: 200,
-          stroke: "#1f6feb",
-          fill: "#1f6feb33",
-        })
-      : placeholderSvg("Sin histórico");
-
-  const refBarsSvg =
-    data.charts.referringDomainsBars.source === "ok"
-      ? renderBarPairChart(data.charts.referringDomainsBars.value.points, {
-          width: 480,
-          height: 200,
-        })
-      : placeholderSvg("Sin histórico");
-
-  const blBarsSvg =
-    data.charts.backlinksBars.source === "ok"
-      ? renderBarPairChart(data.charts.backlinksBars.value.points, {
-          width: 480,
-          height: 200,
-        })
-      : placeholderSvg("Sin histórico");
-
-  const categoriesTable = tableShell(
-    "Categorías de dominios de referencia",
-    ["Categoría", "Cantidad", "%"],
-    categoryRows(
-      data.tables.categories.source === "ok"
-        ? data.tables.categories.value
-        : [],
-    ),
-    "Sin categorías",
-  );
-  const typesTable = tableShell(
-    "Tipos de backlinks",
-    ["Tipo", "Cantidad", "%"],
-    typeRows(data.tables.types.source === "ok" ? data.tables.types.value : []),
-    "Sin tipos",
-  );
-  const attributesTable = tableShell(
-    "Atributos del enlace",
-    ["Atributo", "Cantidad", "%"],
-    attributeRows(
-      data.tables.attributes.source === "ok"
-        ? data.tables.attributes.value
-        : [],
-    ),
-    "Sin atributos",
-  );
-  const anchorsTable = tableShell(
-    "Mejores anchors",
-    ["Anchor", "Backlinks", "Dominios"],
-    anchorRows(
-      data.tables.topAnchors.source === "ok"
-        ? data.tables.topAnchors.value
-        : [],
-    ),
-    "Sin anchors",
-  );
-
   return `<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} · ${escapeHtml(domain)}</title>
+<title>Backlinks · ${escapeHtml(domain)}</title>
 <style>
   :root {
-    --bg: #f5f7fa;
+    --bg: #f4f5f5;
     --card: #ffffff;
-    --text: #1f2933;
-    --muted: #6b7785;
-    --border: #e4e9f0;
-    --brand: #1f6feb;
-    --accent: #14b8a6;
-    --warn: #ef4444;
-    --warn-bg: #fff1f2;
+    --text: ${COLORS.ink};
+    --muted: ${COLORS.muted};
+    --border: ${COLORS.border};
+    --control-border: ${COLORS.controlBorder};
+    --track: ${COLORS.track};
+    --brand: ${COLORS.accent};
+    --brand-surface: ${COLORS.lavender};
+    --brand-soft: ${COLORS.lavenderWarm};
+    --mint: ${COLORS.mint};
+    --mint-soft: ${COLORS.mintSoft};
+    --coral: ${COLORS.coral};
+    --positive: ${COLORS.positive};
+    /* Cards carry this double hairline and no border: a 1px outline hardens
+       them and turns a soft surface into a boxed table. */
+    --card-shadow: rgba(0, 21, 16, 0.07) 0 0 1px 0, rgba(0, 21, 16, 0.07) 0 1px 3px 0;
+    --gap: 12px;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text); padding: 32px;
+    background: var(--bg); color: var(--text); padding: 18px;
+    font-variant-numeric: tabular-nums;
   }
-  .shell { max-width: 1216px; margin: 0 auto; }
-  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 16px; margin: 24px 0 12px; color: var(--text); }
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
-  .chip {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 500;
-    background: var(--card); border: 1px solid var(--border); color: var(--muted);
-  }
-  .chip svg { width: 14px; height: 14px; }
+  .shell { max-width: 1280px; margin: 0 auto; }
+  .muted { color: var(--muted); }
 
-  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
-  .tile {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 16px 16px 14px;
+  /* ---------- query bar ---------- */
+  /* Only as wide as it needs to be; the rest of the row stays empty. */
+  .query { display: inline-flex; align-items: stretch; gap: 6px; margin-bottom: 10px; }
+  .query-input {
+    display: inline-flex; align-items: center; justify-content: space-between;
+    gap: 24px; min-width: 320px; height: 32px; padding: 0 10px;
+    background: var(--card); border: 1px solid var(--control-border);
+    border-radius: 4px; font-size: 13px; color: var(--text);
   }
-  .tile-label {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 11px; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;
+  .query-clear { color: var(--muted); font-size: 14px; line-height: 1; }
+  .query-scope {
+    display: inline-flex; align-items: center; gap: 8px; height: 32px;
+    padding: 0 10px; background: var(--card); border: 1px solid var(--control-border);
+    border-radius: 4px; font-size: 13px; color: var(--text);
   }
-  .tile-label svg { color: var(--brand); }
-  .tile-value { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
-  .tile-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
-  .tile-warn { background: var(--warn-bg); border-color: #fecaca; }
-  .tile-warn .tile-label { color: var(--warn); }
+  .query-go {
+    display: inline-flex; align-items: center; height: 32px; padding: 0 16px;
+    background: #16181c; color: #fff; border-radius: 4px;
+    font-size: 13px; font-weight: 600;
+  }
 
+  /* ---------- page context ---------- */
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+  .breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .breadcrumb .current { color: var(--text); }
+  .helplinks { display: inline-flex; align-items: center; gap: 16px; }
+  .helplink {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; color: var(--brand);
+  }
+
+  .title-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+  h1 { font-size: 21px; margin: 0; letter-spacing: -0.02em; font-weight: 700; line-height: 1.2; }
+  h1 .domain { color: var(--text); }
+  h1 .domain svg { vertical-align: -1px; margin-left: 4px; color: var(--brand); }
+  .btn-outline {
+    display: inline-flex; align-items: center; gap: 6px; height: 30px;
+    padding: 0 12px; border-radius: 4px; font-size: 12.5px; font-weight: 500;
+    background: var(--card); border: 1px solid var(--control-border);
+    color: var(--text); white-space: nowrap;
+  }
+  .chip-warn {
+    display: inline-flex; align-items: center; height: 26px; padding: 0 9px;
+    border-radius: 4px; font-size: 12.5px; font-weight: 500;
+    background: #fdf8ec; border: 1px solid #f3e0b5; color: #92660a;
+  }
+  .title-tools { display: inline-flex; align-items: center; gap: 8px; }
+
+  /* ---------- tabs ---------- */
+  /* The underline is the width of the active label, not the width of a cell:
+     a full-cell rule reads as a segmented control. */
+  .tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+  .tab {
+    padding: 6px 0 9px; font-size: 13px; font-weight: 500;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab.active { color: var(--text); font-weight: 600; border-bottom-color: var(--brand); }
+  .tab--more { color: var(--muted); display: inline-flex; align-items: center; }
+
+  /* ---------- competitor comparison ---------- */
+  /* The two scope labels sit over the two inputs, so both rows share one
+     column definition instead of being lined up by eye. */
+  .cmp { margin-bottom: var(--gap); }
+  .cmp-scopes { display: grid; grid-template-columns: 232px 232px; gap: 10px; margin-bottom: 6px; }
+  .cmp-scope { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 500; }
+  .cmp-row { display: flex; align-items: center; gap: 10px; }
+  .cmp-input {
+    display: inline-flex; align-items: center; gap: 8px;
+    width: 232px; height: 32px; padding: 0 8px;
+    background: var(--card); border: 1px solid var(--control-border);
+    border-radius: 4px; font-size: 13px; color: var(--text);
+    overflow: hidden; white-space: nowrap;
+  }
+  .you {
+    display: inline-flex; align-items: center; height: 20px; padding: 0 7px;
+    border-radius: 3px; background: var(--brand-surface); color: var(--brand);
+    font-size: 11.5px; font-weight: 600; flex-shrink: 0;
+  }
+  .cmp-dot { width: 9px; height: 9px; border-radius: 50%; background: #c9ccd2; flex-shrink: 0; }
+  .cmp-go {
+    display: inline-flex; align-items: center; height: 32px; padding: 0 16px;
+    background: #16181c; color: #fff; border-radius: 4px;
+    font-size: 13px; font-weight: 600;
+  }
+  .cmp-add { font-size: 12.5px; color: var(--brand); font-weight: 500; }
+
+  /* ---------- cards ---------- */
   .card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 18px;
+    background: var(--card); border: 0; border-radius: 9px; padding: 16px;
+    box-shadow: var(--card-shadow);
   }
   .card-head {
-    display: flex; align-items: baseline; justify-content: space-between;
-    margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
   }
-  .card-head h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
-  .card-head .muted { font-size: 12px; color: var(--muted); }
-  .muted { color: var(--muted); }
-  .center { text-align: center; }
-  .chart-body { display: flex; justify-content: center; align-items: center; min-height: 200px; }
-  .chart-body svg { width: 100%; height: auto; max-height: 320px; }
+  .card-head h3 {
+    margin: 0; font-size: 14.5px; font-weight: 700;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .card-info { display: inline-flex; color: #b7bcc4; }
+  .card-sub { font-size: 11px; color: var(--muted); margin: -6px 0 10px; }
+  .caption { font-size: 11.5px; color: var(--muted); }
+  .caption-right { font-size: 11.5px; color: var(--muted); text-align: right; height: 16px; }
+  .split { height: 1px; background: var(--border); margin: 14px 0; }
 
-  .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-  .row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  /* ---------- KPI strip ---------- */
+  /* One surface, six cells, hairline dividers. Six separate cards is the
+     composition this replaces. */
+  .kpis {
+    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+    min-height: 80px; align-items: center; padding: 14px 0; margin-bottom: var(--gap);
+  }
+  .kpi { padding: 0 16px; min-width: 0; }
+  .kpi + .kpi { border-left: 1px solid var(--border); }
+  .kpi-label {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 12.5px; font-weight: 500; color: var(--text);
+    margin-bottom: 6px; white-space: nowrap;
+  }
+  .kpi-info { display: inline-flex; color: #b7bcc4; }
+  /* Periwinkle, measured against the reference's own markup — the KPI value
+     is the accent colour, not body ink. */
+  .kpi-value {
+    font-size: 24px; font-weight: 700; letter-spacing: -0.02em;
+    line-height: 1.1; color: var(--brand); white-space: nowrap;
+  }
+  .kpi-value--empty { color: var(--muted); font-weight: 600; }
+  .kpi-delta { font-size: 12px; font-weight: 600; margin-left: 5px; letter-spacing: 0; }
+  .kpi-delta--up { color: var(--positive); }
+  .kpi-delta--down { color: var(--coral); }
 
-  table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  table.data th, table.data td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-  table.data th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
-  table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  table.data td.anchor { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
-  table.data tr:last-child td { border-bottom: 0; }
+  /* ---------- grids ---------- */
+  .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); margin-bottom: var(--gap); }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); margin-bottom: var(--gap); }
+  .grid-2:last-child, .grid-3:last-child { margin-bottom: 0; }
 
-  .footer {
-    margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--border);
-    font-size: 11px; color: var(--muted); display: flex; justify-content: space-between;
+  /* Min-heights are what hold the page together when a source fails: the
+     module keeps its box whether or not anything arrived to fill it. */
+  .card-auth { min-height: 300px; display: flex; flex-direction: column; }
+  .card-history { min-height: 262px; display: flex; flex-direction: column; }
+  .card-flow { min-height: 278px; display: flex; flex-direction: column; }
+  .card-breakdown { min-height: 352px; display: flex; flex-direction: column; }
+
+  .chart { display: block; }
+  .chart svg { width: 100%; height: auto; display: block; }
+  .chart--cloud { flex: 1; }
+
+  /* ---------- authority ---------- */
+  .auth-score { display: flex; align-items: center; gap: 10px; min-height: 28px; margin-bottom: 4px; }
+  .auth-value { font-size: 25px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+  .auth-value--empty { color: var(--muted); font-size: 20px; }
+  .badge-mint {
+    display: inline-flex; align-items: center; height: 21px; padding: 0 9px;
+    border-radius: 4px; background: var(--mint-soft); color: #0c6f61;
+    font-size: 11.5px; font-weight: 600;
+  }
+
+  /* ---------- history controls ---------- */
+  .range { display: flex; justify-content: flex-end; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 4px; height: 20px; }
+  .range .active { color: var(--brand); font-weight: 600; border-bottom: 2px solid var(--brand); padding-bottom: 2px; }
+
+  /* A fixed-height row: the legend is a key drawn in one state, and it is not
+     allowed to change the height of the module it labels. */
+  .flow-head { display: flex; align-items: center; justify-content: space-between; height: 20px; margin-bottom: 6px; }
+  .legend { display: inline-flex; align-items: center; gap: 16px; }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+  .cbox {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 13px; height: 13px; border-radius: 3px;
+  }
+
+  /* ---------- bar rows ---------- */
+  .brows { display: flex; flex-direction: column; }
+  .brow-track {
+    display: block; position: relative; height: 8px; border-radius: 2px;
+    background: var(--track); overflow: hidden;
+  }
+  .brow-fill { display: block; height: 100%; border-radius: 2px; }
+  .brow-label { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brow-share { font-size: 12.5px; color: var(--muted); text-align: right; }
+  .brow-count { font-size: 12.5px; color: var(--brand); font-weight: 500; text-align: right; }
+
+  .brow--stacked { margin-bottom: 18px; }
+  .brow--stacked:last-child { margin-bottom: 0; }
+  .brow--stacked .brow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+  .brow--stacked .brow-nums { display: inline-flex; align-items: baseline; gap: 10px; }
+
+  /* One grid for every inline list; the label column is the only thing that
+     changes between them, so it travels as a custom property. */
+  .brow--inline {
+    display: grid; grid-template-columns: var(--label-w, 72px) minmax(0, 1fr) 42px 56px;
+    align-items: center; column-gap: 10px; height: 26px;
+  }
+  .brows--buckets { --label-w: 62px; }
+  .brows--breakdown { --label-w: 72px; }
+  .brows--breakdown .brow--inline { height: 32px; }
+
+  /* ---------- CTA ---------- */
+  .btn-dark {
+    display: inline-flex; align-items: center; align-self: flex-start;
+    height: 28px; padding: 0 12px; margin-top: auto;
+    background: #16181c; color: #fff; border-radius: 4px;
+    font-size: 12.5px; font-weight: 600;
   }
 </style>
 </head>
 <body>
   <div class="shell">
-    <h1>${escapeHtml(title)}</h1>
-    <div class="chips">
-      <span class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path></svg>
-        ${escapeHtml(domain)}
+    <div class="query">
+      <span class="query-input">${escapeHtml(domain)}<span class="query-clear">×</span></span>
+      <span class="query-scope">Root Domain ${ICONS.chevron}</span>
+      <span class="query-go">Analyze</span>
+    </div>
+
+    <div class="topbar">
+      <nav class="breadcrumb">
+        <span>Home</span><span>›</span><span>SEO</span><span>›</span>
+        <span class="current">Backlink Analytics</span>
+      </nav>
+      <span class="helplinks">
+        <span class="helplink">${ICONS.book}User manual</span>
+        <span class="helplink">${ICONS.flag}Send feedback</span>
       </span>
-      <span class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-        País: ${escapeHtml(country.toUpperCase())}
+    </div>
+
+    <div class="title-row">
+      <h1>Backlinks: <span class="domain">${escapeHtml(domain)}${ICONS.external}</span></h1>
+      <span class="title-tools">
+        ${data.healthy ? "" : `<span class="chip-warn">Partial data</span>`}
+        <span class="btn-outline">${ICONS.upload}Export to PDF</span>
       </span>
-      <span class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
-        ${escapeHtml(deviceLabel)}
-      </span>
-      ${data.healthy ? "" : `<span class="chip" style="color:var(--warn);border-color:#fecaca;">Datos parciales</span>`}
     </div>
 
-    <div class="tiles">${renderTiles(data.tiles, tiles)}</div>
+    <!-- The reference carries a context line here (live backlinks found today,
+         and the domain's own category). Neither has a source in this report:
+         no endpoint reports a same-day backlink count, and no endpoint
+         classifies the target domain. The line is omitted rather than filled
+         with a number nobody measured. -->
 
-    <h2>Visión general de autoridad</h2>
-    <div class="row-3">
-      ${chartCard("Radar de autoridad", "5 dimensiones", radarSvg)}
-      ${chartCard("Tendencia de autoridad", "histórico 12 sem.", trendSvg)}
-      ${chartCard("Grafo de red", "Top dominios y spam score", networkSvg)}
-    </div>
-
-    <h2>Red de dominios de referencia</h2>
-    <div class="row-2">
-      ${chartCard("Dominios en el tiempo", "área acumulada", refAreaSvg)}
-      ${chartCard("Backlinks en el tiempo", "área acumulada", blAreaSvg)}
-    </div>
-    <div class="row-2">
-      ${chartCard(
-        "Nuevos vs perdidos (dominios)",
-        "barras por período",
-        refBarsSvg,
-      )}
-      ${chartCard(
-        "Nuevos vs perdidos (backlinks)",
-        "barras por período",
-        blBarsSvg,
-      )}
+    <div class="tabs">
+      <span class="tab active">Overview</span>
+      <span class="tab">Backlinks</span>
+      <span class="tab">Network Graph</span>
+      <span class="tab">Anchors</span>
+      <span class="tab">Indexed Pages</span>
+      <span class="tab">Outbound Domains</span>
+      <span class="tab">Bulk Analysis</span>
+      <span class="tab tab--more">${ICONS.dots}</span>
     </div>
 
-    <h2>Tablas</h2>
-    <div class="row-2">
-      ${categoriesTable}
-      ${anchorsTable}
-    </div>
-    <div class="row-2">
-      ${typesTable}
-      ${attributesTable}
+    <div class="cmp">
+      <div class="cmp-scopes">
+        <span class="cmp-scope">Root Domain ${ICONS.chevron}</span>
+        <span class="cmp-scope">Root Domain ${ICONS.chevron}</span>
+      </div>
+      <div class="cmp-row">
+        <span class="cmp-input"><span class="you">You</span>${escapeHtml(domain)}</span>
+        <span class="cmp-input"><span class="cmp-dot"></span><span class="muted">Add competitor</span></span>
+        <span class="cmp-go">Compare</span>
+        <span class="cmp-add">+ Add up to 3 competitors</span>
+      </div>
     </div>
 
-    <div class="footer">
-      <span>Datos propios (DataForSEO)</span>
-      <span>${escapeHtml(report)} · ${escapeHtml(country.toUpperCase())} · ${escapeHtml(deviceLabel)}</span>
+    ${renderKpiStrip(kpis)}
+
+    <div class="grid-3">
+      ${renderAuthorityCard(data.charts.authorityProfile)}
+      ${renderTrendCard(data.charts.authorityTrend)}
+      ${renderGraphCard(domain, data.charts.networkGraph)}
+    </div>
+
+    <div class="grid-2">
+      ${renderAreaCard("Referring Domains", data.charts.referringDomainsArea)}
+      ${renderAreaCard("Backlinks", data.charts.backlinksArea)}
+    </div>
+
+    <div class="grid-2">
+      ${renderNewLostCard("New and Lost Referring Domains", data.charts.referringDomainsBars)}
+      ${renderNewLostCard("New and Lost Backlinks", data.charts.backlinksBars)}
+    </div>
+
+    <div class="grid-2">
+      ${renderCategoriesCard(data.tables.categories, data.tables.categoriesDimension)}
+      ${renderAnchorsCard(data.tables.topAnchors)}
+    </div>
+
+    <div class="grid-2">
+      ${renderAuthorityDistributionCard(data.tables.authorityDistribution, data.tables.authorityDistributionSample)}
+      ${renderBreakdownCard(data.tables.types, data.tables.attributes)}
     </div>
   </div>
 </body>
