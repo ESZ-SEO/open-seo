@@ -53,6 +53,7 @@
     "cleanup:default-projects:d1": "tsx scripts/d1-default-project-cleanup.ts",
     "gdpr:erase-user": "tsx scripts/erase-user-data.ts",
     "preview:backlinks": "tsx scripts/preview-backlinks-report.ts",
+    "preview:keywords": "tsx scripts/preview-keywords-report.ts",
     "preview:overview": "tsx scripts/preview-overview-report.ts",
     "seed:rank-tracking": "tsx scripts/seed-rank-tracking.ts",
     "seed:projects": "tsx scripts/seed-projects.ts",

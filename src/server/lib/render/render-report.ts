@@ -13,12 +13,17 @@ import { renderReportShell } from "@/server/lib/render/templates/shell";
 import { renderBacklinksReport } from "@/server/lib/render/templates/backlinks";
 import { renderCompetitorsReport } from "@/server/lib/render/templates/competitors";
 import {
+  keywordsFlagCodes,
+  renderKeywordsReport,
+} from "@/server/lib/render/templates/keywords";
+import {
   overviewFlagCodes,
   renderOverviewReport,
 } from "@/server/lib/render/templates/overview";
 import { buildBacklinksReportData } from "@/server/lib/render/reports/backlinks-report";
 import { buildCompetitorsReportData } from "@/server/lib/render/reports/competitors-report";
 import { buildOverviewReportData } from "@/server/lib/render/reports/overview-report";
+import { buildKeywordsReportData } from "@/server/lib/render/reports/keywords-report";
 import { loadCountryFlags } from "@/server/lib/render/country-flags";
 import { uploadPng } from "@/server/lib/render/r2-upload";
 
@@ -29,10 +34,16 @@ import { uploadPng } from "@/server/lib/render/r2-upload";
  * E2: `competitors` is an optional comma-separated list (max 2) of competitor
  * domains. When omitted on the `competitors` report, the service degrades to a
  * single-domain report (see `buildCompetitorsReportData`).
+ *
+ * E5: `keyword` is the seed the `keywords` report analyses. Optional, so the
+ * three domain reports keep their existing call shape; on the keyword report it
+ * falls back to `domain`, which lets a caller with a single free-text field put
+ * the seed there. Every other report ignores it.
  */
 export const renderParamsSchema = z.object({
-  report: z.enum(["backlinks", "competitors", "overview"]),
+  report: z.enum(["backlinks", "competitors", "overview", "keywords"]),
   domain: z.string().trim().min(1, { message: "domain is required" }),
+  keyword: z.string().trim().min(1).optional(),
   country: z.string().trim().min(1).default("ES"),
   device: z.enum(["desktop", "mobile", "tablet"]).default("desktop"),
   competitors: z
@@ -73,11 +84,16 @@ export type RenderParams = z.infer<typeof renderParamsSchema>;
  * `cloudflare:workers` to supply `env.R2`, `env.RENDERER_URL`, etc.
  */
 export async function renderReport(params: RenderParams): Promise<Uint8Array> {
-  const { report, domain, country, device, competitors } = params;
+  const { report, domain, country, device, competitors, keyword } = params;
+
+  // What the report is ABOUT: the domain, except on the keyword report, where
+  // it is the seed. Two seeds must never collide on one cached PNG — see
+  // `buildReportCacheKey`.
+  const subject = report === "keywords" ? (keyword ?? domain) : domain;
 
   const cacheKey = await buildReportCacheKey(
     report,
-    domain,
+    subject,
     country,
     device,
     competitors,
@@ -86,13 +102,7 @@ export async function renderReport(params: RenderParams): Promise<Uint8Array> {
   const cached = await getCachedReport(cacheKey);
   if (cached) return cached;
 
-  const html = await buildReportHtml(
-    report,
-    domain,
-    country,
-    device,
-    competitors,
-  );
+  const html = await buildReportHtml(params);
   // Reports are taller than the 1280×800 viewport — capture the full
   // document so nothing gets clipped at the bottom edge.
   const png = await renderHtmlToPng(html, { fullPage: true });
@@ -108,15 +118,18 @@ export async function renderReport(params: RenderParams): Promise<Uint8Array> {
  *
  * E1 implements `backlinks`; E2 implements `competitors`; E3 implements
  * `overview` (the 1-page Domain Overview summary — 5 tiles, country
- * distribution table, two charts; E3.4 historical traffic is a stub here).
+ * distribution table, two charts; E3.4 historical traffic is a stub here);
+ * E5 implements `keywords` (the keyword research table — topic rail, summary
+ * bar and the highest-volume ideas for a seed).
  */
-async function buildReportHtml(
-  report: RenderParams["report"],
-  domain: string,
-  country: string,
-  device: string,
-  competitors?: string[],
-): Promise<string> {
+async function buildReportHtml({
+  report,
+  domain,
+  country,
+  device,
+  competitors,
+  keyword,
+}: RenderParams): Promise<string> {
   if (report === "backlinks") {
     const data = await buildBacklinksReportData({ domain, country });
     return renderBacklinksReport({ report, domain, country, device, data });
@@ -153,6 +166,21 @@ async function buildReportHtml(
       domain,
       country,
       device,
+      data,
+      flags,
+    });
+  }
+  if (report === "keywords") {
+    // The seed: an explicit `keyword` when the caller sent one, otherwise the
+    // free-text `domain` field, which is where a single-input caller puts it.
+    const seed = keyword ?? domain;
+    const data = await buildKeywordsReportData({ keyword: seed, country });
+    // Only the one market flag this report can draw gets loaded — the list
+    // comes from the template so the two can't drift apart.
+    const flags = await loadCountryFlags(keywordsFlagCodes(data.input.country));
+    return renderKeywordsReport({
+      keyword: seed,
+      country: data.input.country,
       data,
       flags,
     });
