@@ -65,6 +65,9 @@ const REPORT_TITLES: Record<ReportKind, string> = {
   backlinks: "Backlinks Report",
   competitors: "Domain Comparison",
   overview: "Domain Overview",
+  // Present only to satisfy the exhaustive map: this template never renders
+  // the keyword report, which has its own (see `templates/keywords.ts`).
+  keywords: "Keyword Research",
 };
 
 const DEVICE_LABELS: Record<string, string> = {

@@ -21,6 +21,10 @@ export const RENDER_TTL_SECONDS = {
   backlinks: 30 * 86_400,
   competitors: 15 * 86_400,
   overview: 7 * 86_400,
+  // The shortest-lived of the four: keyword ideas and their volumes turn over
+  // on DataForSEO's monthly refresh, and a seed's idea set moves faster than a
+  // domain's backlink profile.
+  keywords: 7 * 86_400,
 } as const;
 
 export type ReportKind = keyof typeof RENDER_TTL_SECONDS;
@@ -47,10 +51,15 @@ function normalizeCompetitors(competitors: readonly string[] | undefined) {
  * would serve a PNG for `domain vs [b]`. The competitor list is included in
  * the hash; ordering is normalised before hashing so the input order is
  * irrelevant.
+ *
+ * E5: `subject` is whatever the report is ABOUT — a domain for the three
+ * domain reports, the seed keyword for the keyword report. Two different seeds
+ * therefore land on two different keys, exactly as two different domains do.
+ * The hash field is still called `domain` so no existing cache entry moves.
  */
 export async function buildReportCacheKey(
   report: ReportKind,
-  domain: string,
+  subject: string,
   country: string,
   device: string,
   competitors?: readonly string[],
@@ -58,7 +67,7 @@ export async function buildReportCacheKey(
   const normalized = normalizeCompetitors(competitors);
   return buildCacheKey("render:report", {
     report,
-    domain,
+    domain: subject,
     country,
     device,
     competitors: normalized,
