@@ -55,3 +55,42 @@ pnpm install --offline
 ```
 `pnpm-lock.yaml` stays untouched. Suspected cause: OneDrive sync, consistent with the
 existing OneDrive-vs-file-write friction noted in the render-reports playbook.
+
+## 2026-09-15 — the empty-package-dir failure hits several packages at once; scan for all of them
+
+**Friction:** same root cause as the 2026-09-11 `zod` entry (OneDrive leaves pnpm package
+directories present but empty), except six packages were hollow at once: `undici`,
+`eventsource-parser`, `@vercel/oidc`, `@standard-schema/spec`, `@workflow/serde` and
+`json-schema`. Fixing them one at a time cost three dev-server restarts, each surfacing only
+the next missing module — `Cannot find module 'undici'`, then `Could not resolve
+"eventsource-parser"`, and so on. `pnpm install` keeps reporting `Already up to date`
+because it treats an empty-but-present directory as installed.
+
+**What worked:** stop chasing them one by one and enumerate every hollow package first — a
+real directory (not a symlink) under `.pnpm/*/node_modules/` with no `package.json` in it:
+
+```
+node -e "
+const fs=require('fs'),path=require('path');const root='node_modules/.pnpm';let empty=[];
+for(const d of fs.readdirSync(root)){const nm=path.join(root,d,'node_modules');if(!fs.existsSync(nm))continue;
+for(const p of fs.readdirSync(nm)){const es=p.startsWith('@')?fs.readdirSync(path.join(nm,p)).map(s=>p+'/'+s):[p];
+for(const e of es){const f=path.join(nm,e);let st;try{st=fs.lstatSync(f)}catch{continue}
+if(st.isSymbolicLink())continue;if(!fs.existsSync(path.join(f,'package.json')))empty.push(d);}}}
+console.log(empty.length, empty.join(' '));"
+```
+
+Then move that whole list to trash in one go and run `pnpm install` once. Re-run the scan to
+confirm it prints `0`. `pnpm-lock.yaml` stays untouched.
+
+**Gotcha:** the scan must skip symlinks. The hollow directory is the store entry itself; the
+symlinks pointing at it look fine, which is why the failure reads as "module not found" for
+a package that `ls node_modules` clearly shows.
+
+## 2026-09-15 — writing a large file with a bash heredoc fails on Windows
+
+**Friction:** `cat > file <<'EOF' ... EOF` with a large body fails with
+`ENAMETOOLONG: uv_spawn` on Windows, because the whole heredoc becomes part of the spawned
+command line. Hit while writing a ~39KB report.
+
+**What worked:** use the Write tool instead. Short appends (a few dozen lines, like this
+entry) are fine via `cat >>`.
