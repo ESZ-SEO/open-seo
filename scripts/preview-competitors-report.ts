@@ -12,6 +12,7 @@ import type {
   CompetitorRow,
   CompetitorsReportData,
   KeywordGapRow,
+  TrendSeries,
 } from "@/server/lib/render/reports/competitors-report";
 
 /**
@@ -222,6 +223,7 @@ function sampleFixture(): CompetitorsReportData {
       missing: { value: missingRows(), source: "ok" },
       weak: { value: weakRows(), source: "ok" },
     },
+    trafficTrend: { value: trendSeries(), source: "ok" },
     competitorCount: COMPETITORS.length,
     vennFromRealCalls: true,
     venn: {
@@ -275,6 +277,7 @@ function degradedFixture(): CompetitorsReportData {
       missing: { value: [], source: "error" },
       weak: { value: [], source: "error" },
     },
+    trafficTrend: { value: [], source: "error" },
     competitorCount: COMPETITORS.length,
     vennFromRealCalls: false,
     venn: {
@@ -289,6 +292,50 @@ function degradedFixture(): CompetitorsReportData {
       source: "error",
     },
   };
+}
+
+/**
+ * Thirteen months of organic traffic per domain.
+ *
+ * Synthetic, like the rest of this fixture: the builder has no historical
+ * fetch, so nothing real could fill this today. The shapes are deliberately
+ * different from each other — one drifting down then recovering, one flat, one
+ * slowly growing — because three parallel lines would not tell us whether the
+ * chart actually separates its series.
+ */
+function trendSeries(): TrendSeries[] {
+  const months = [
+    "2025-09-01",
+    "2025-10-01",
+    "2025-11-01",
+    "2025-12-01",
+    "2026-01-01",
+    "2026-02-01",
+    "2026-03-01",
+    "2026-04-01",
+    "2026-05-01",
+    "2026-06-01",
+    "2026-07-01",
+    "2026-08-01",
+    "2026-09-01",
+  ];
+  const shapes: Record<string, number[]> = {
+    [DOMAIN]: [
+      2100, 2040, 1890, 1720, 1610, 1580, 1660, 1540, 1620, 1700, 1760, 1810,
+      1840,
+    ],
+    [COMPETITORS[0]!]: [
+      6100, 6250, 6380, 6120, 5890, 6040, 6410, 6680, 6520, 6740, 6810, 6900,
+      6930,
+    ],
+    [COMPETITORS[1]!]: [
+      410, 450, 480, 520, 560, 590, 610, 640, 660, 690, 710, 730, 740,
+    ],
+  };
+  return Object.entries(shapes).map(([domain, values]) => ({
+    domain,
+    points: months.map((date, i) => ({ date, value: values[i] ?? null })),
+  }));
 }
 
 /** Keywords a competitor ranks for and the primary does not. */

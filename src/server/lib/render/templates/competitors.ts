@@ -4,9 +4,13 @@ import type {
   CompetitorRow,
   CompetitorsReportData,
   KeywordGapRow,
+  TrendSeries,
   VennCounts,
 } from "@/server/lib/render/reports/competitors-report";
-import { renderVennDiagram } from "@/server/lib/render/charts/charts";
+import {
+  renderMultiLineChart,
+  renderVennDiagram,
+} from "@/server/lib/render/charts/charts";
 
 /**
  * Compare Domains template (E2, brought to visual parity 2026-09-21).
@@ -164,6 +168,7 @@ const ICON_CALENDAR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 const ICON_CHEVRON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`;
 const ICON_EXTERNAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>`;
 const ICON_INFO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>`;
+const ICON_EXPORT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5M12 5v12"/></svg>`;
 const ICON_CLEAR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>`;
 
 /* ------------------------------- header ------------------------------- */
@@ -414,6 +419,79 @@ function card(title: string, body: string, foot?: string): string {
     </section>`;
 }
 
+/* ----------------------------- trend block ---------------------------- */
+
+/**
+ * The Organic Traffic module: a toolbar of drawn controls over a multi-line
+ * chart, one line per compared domain.
+ *
+ * Every control is markup (§ the file docstring). The visible metric and range
+ * are render parameters; nothing here reacts to anything.
+ *
+ * When `series` is empty the module still occupies its full height with an
+ * empty plot area. That is deliberate: dropping the block when the data is
+ * missing collapses the page and hides the gap instead of showing it.
+ */
+function trendBlock(
+  series: TrendSeries[],
+  range: string,
+  rows: CompetitorRow[],
+): string {
+  const lines = series
+    .map((s) => {
+      const index = rows.findIndex((r) => r.domain === s.domain);
+      return {
+        label: s.domain,
+        points: s.points,
+        color: seriesColor(index < 0 ? 0 : index),
+      };
+    })
+    .filter((s) => s.points.length > 1);
+
+  const checks = (
+    lines.length > 0
+      ? lines
+      : rows.map((r, i) => ({ label: r.domain, color: seriesColor(i) }))
+  )
+    .map(
+      (s) =>
+        `<span class="series-check"><span class="check" style="background:${s.color}"></span>${escapeHtml(truncate(s.label, 26))}</span>`,
+    )
+    .join("");
+
+  const plot =
+    lines.length > 0
+      ? renderMultiLineChart(lines, {
+          width: 1240,
+          height: 210,
+          // The block draws its own series row above the plot, the way the
+          // reference does; the chart's built-in legend would be a second one.
+          showLegend: false,
+        })
+      : `<div class="plot-empty">No traffic history available for these domains</div>`;
+
+  return `<section class="card trend">
+      <div class="trend-bar">
+        <span class="segmented">
+          <span class="seg seg--on">Organic</span>
+          <span class="seg">Paid</span>
+          <span class="seg">Backlinks</span>
+        </span>
+        <span class="trend-right">
+          <span class="segmented">
+            <span class="seg">Days</span>
+            <span class="seg seg--on">Months</span>
+          </span>
+          <span class="range">${ICON_CALENDAR}${escapeHtml(range)}</span>
+          <span class="range">${ICON_EXPORT}Export</span>
+        </span>
+      </div>
+      <h3 class="trend-title">Organic Traffic</h3>
+      <div class="series-checks">${checks}</div>
+      <div class="plot">${plot}</div>
+    </section>`;
+}
+
 /* ---------------------------- opportunities --------------------------- */
 
 function opportunitiesCard(
@@ -524,15 +602,20 @@ function overlapCard({
   const body =
     competitors.length === 0
       ? `<div class="empty">Add a competitor to compare keyword sets</div>`
-      : `<ul class="legend legend--top">${legend}</ul>
-         <div class="venn">${renderVennDiagram({
-           sets,
-           pairs,
-           total: vennFromRealCalls
-             ? venn.primaryAndComp1 + venn.primaryAndComp2 + venn.comp1Only
-             : undefined,
-           opts: { width: 780, height: 300 },
-         })}</div>`;
+      : `<div class="overlap">
+           <div class="venn">${renderVennDiagram({
+             sets,
+             pairs,
+             total: vennFromRealCalls
+               ? venn.primaryAndComp1 + venn.primaryAndComp2 + venn.comp1Only
+               : undefined,
+             // Labels off: the legend to its right carries the domain and the
+             // count, exactly as the reference does, and two sets of labels
+             // for the same three circles is noise.
+             opts: { width: 430, height: 290, showLabels: false },
+           })}</div>
+           <ul class="legend legend--overlap">${legend}</ul>
+         </div>`;
 
   return `<section class="card card--tight">
       <h3>Keyword Overlap ${flagMarkup(flags, country.toUpperCase())}<span class="h3-note">${escapeHtml(country.toUpperCase())}</span></h3>
@@ -541,6 +624,26 @@ function overlapCard({
 }
 
 /* ------------------------------ top-level ------------------------------ */
+
+const MONTH_FMT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/** The plotted range, read off the series. With no series there is no range to
+ *  name, so the control renders a dash rather than a window we never drew. */
+function rangeLabel(series: TrendSeries[]): string {
+  const dates = series
+    .flatMap((s) => s.points.map((p) => p.date))
+    .filter((d) => d.length >= 7);
+  // oxlint-disable-next-line unicorn/no-array-sort -- no toSorted() on this project's ES2022 lib; flatMap already returned a fresh array, nothing to mutate
+  dates.sort();
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  if (!first || !last) return "—";
+  return `${MONTH_FMT.format(new Date(first))} – ${MONTH_FMT.format(new Date(last))}`;
+}
 
 /** UTC on purpose: `new Date("2026-09-21")` is UTC midnight, and formatting
  *  that in a negative-offset zone prints the 20th. A report date that drifts by
@@ -570,6 +673,9 @@ export function renderCompetitorsReport({
   const dateLabel = DATE_FMT.format(
     reportDate ? new Date(reportDate) : new Date(),
   );
+  const trendSeries =
+    data.trafficTrend.source === "ok" ? data.trafficTrend.value : [];
+  const trendRangeLabel = rangeLabel(trendSeries);
 
   const missingRows =
     data.keywordGap.missing.source === "ok"
@@ -738,8 +844,9 @@ export function renderCompetitorsReport({
   .bar-label { width: 116px; flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bar-value { width: 34px; flex: 0 0 auto; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
   .bar-value--right { text-align: left; }
-  .bar-track { flex: 1 1 auto; height: 9px; border-radius: 999px; background: #eeeff0; overflow: hidden; }
-  .bar-fill { display: block; height: 100%; border-radius: 999px; }
+  /* Square, not pill-shaped: the reference's tracks have straight corners. */
+  .bar-track { flex: 1 1 auto; height: 11px; border-radius: 1px; background: #eeeff0; overflow: hidden; }
+  .bar-fill { display: block; height: 100%; border-radius: 0; }
 
   /* --- bottom row --- */
   .row-bottom { display: grid; grid-template-columns: 28% minmax(0, 1fr); gap: var(--gap); align-items: stretch; }
@@ -754,6 +861,21 @@ export function renderCompetitorsReport({
   table.gap td { padding: 8px 0; border-bottom: 1px solid var(--border); }
   .kw-link { color: var(--link); }
   .venn { display: flex; justify-content: center; align-items: center; }
+  .overlap { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; align-items: start; }
+  .legend--overlap { padding-top: 6px; }
+
+  .trend { margin-bottom: var(--gap); padding: 12px 16px 6px; }
+  .trend-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .trend-right { display: flex; align-items: center; gap: 10px; }
+  .range { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px;
+           border: 1px solid var(--control-border); border-radius: 4px; font-size: 12px; }
+  .range svg { width: 13px; height: 13px; color: var(--muted); }
+  .trend-title { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+  .series-checks { display: flex; gap: 16px; margin-bottom: 4px; font-size: 12.5px; }
+  .series-check { display: inline-flex; align-items: center; gap: 7px; }
+  .plot { display: flex; justify-content: center; }
+  .plot-empty { width: 100%; height: 210px; display: flex; align-items: center; justify-content: center;
+                color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -766,6 +888,11 @@ export function renderCompetitorsReport({
     ${brandCard(rows)}
     ${paidOrganicCard(rows)}
   </div>
+  ${trendBlock(
+    data.trafficTrend.source === "ok" ? data.trafficTrend.value : [],
+    trendRangeLabel,
+    rows,
+  )}
   <div class="row-bottom">
     ${opportunitiesCard(missingRows, weakRows, opportunitiesTab, flags, country)}
     ${overlapCard({

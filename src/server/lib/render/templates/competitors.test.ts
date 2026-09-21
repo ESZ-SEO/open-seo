@@ -39,6 +39,7 @@ function sampleData(
       missing: { value: [], source: "empty" },
       weak: { value: [], source: "empty" },
     },
+    trafficTrend: { value: [], source: "empty" as const },
     competitorCount: 2,
     vennFromRealCalls: true,
     venn: {
@@ -130,6 +131,38 @@ describe("renderCompetitorsReport", () => {
     const html = renderCompetitorsReport({ ...BASE, data: sampleData() });
     expect(html).toContain("≈");
     expect(html).not.toContain("∩ 0");
+  });
+
+  it("keeps the trend block at full height when there is no history", () => {
+    // Dropping the module when the data is missing collapses the page and
+    // hides the gap; the empty state is the point.
+    const html = renderCompetitorsReport({ ...BASE, data: sampleData() });
+    expect(html).toContain("Organic Traffic");
+    expect(html).toContain("No traffic history available");
+    // The range control cannot name a window we never plotted.
+    expect(html).toContain("—");
+  });
+
+  it("plots one line per domain when history is present", () => {
+    const html = renderCompetitorsReport({
+      ...BASE,
+      data: sampleData({
+        trafficTrend: {
+          source: "ok",
+          value: [
+            {
+              domain: "example.com",
+              points: [
+                { date: "2026-08-01", value: 100 },
+                { date: "2026-09-01", value: 140 },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    expect(html).toContain("Aug 2026 – Sep 2026");
+    expect(html).not.toContain("No traffic history available");
   });
 
   it("with 0 competitors degrades to a primary-only report", () => {

@@ -1022,7 +1022,7 @@ export function renderStackedAreaChart(
 
 export function renderMultiLineChart(
   series: TimeSeries[],
-  opts: { width?: number; height?: number } = {},
+  opts: { width?: number; height?: number; showLegend?: boolean } = {},
 ): string {
   const width = opts.width ?? 480;
   const height = opts.height ?? 240;
@@ -1053,12 +1053,15 @@ export function renderMultiLineChart(
     })
     .join("");
 
-  const legend = renderLegendRow(
-    series.map((s, si) => ({
-      label: s.label,
-      color: s.color ?? seriesColor(si),
-    })),
-  );
+  const legend =
+    (opts.showLegend ?? true)
+      ? renderLegendRow(
+          series.map((s, si) => ({
+            label: s.label,
+            color: s.color ?? seriesColor(si),
+          })),
+        )
+      : "";
 
   return svg(
     width,
@@ -1709,8 +1712,10 @@ export type VennInput = {
   pairs?: VennPair[];
   /** Total keyword count for the headline label. */
   total?: number;
-  /** Width/height override (defaults 360×280 — fits the spec's card). */
-  opts?: { width?: number; height?: number };
+  /** Width/height override (defaults 360×280 — fits the spec's card), and
+   *  whether each circle carries its own outside label. Turn labels off when
+   *  a legend beside the diagram already names the sets. */
+  opts?: { width?: number; height?: number; showLabels?: boolean };
 };
 
 /**
@@ -1741,7 +1746,9 @@ export function renderVennDiagram(input: VennInput): string {
   const maxValue = Math.max(...sets.map((s) => Math.max(0, s.value)), 0);
   // Leave room for the outside labels: the largest disc gets ~30% of the
   // shorter side, which keeps a 3-circle layout inside the viewport.
-  const rMax = Math.min(width, height) * (sets.length > 2 ? 0.26 : 0.3);
+  const labelRoom = (input.opts?.showLabels ?? true) ? 1 : 1.38;
+  const rMax =
+    Math.min(width, height) * (sets.length > 2 ? 0.26 : 0.3) * labelRoom;
   const rMin = 10;
   const radius = (value: number): number =>
     maxValue <= 0
@@ -1838,7 +1845,8 @@ export function renderVennDiagram(input: VennInput): string {
     })
     .join("");
 
-  const labels = sets
+  const showLabels = input.opts?.showLabels ?? true;
+  const labels = (showLabels ? sets : [])
     .map((d, i) => {
       const pos = positions[i];
       const r = radii[i];
