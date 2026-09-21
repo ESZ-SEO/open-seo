@@ -1351,7 +1351,8 @@ export function renderWordCloud(
   // spill past the bottom edge.
   let usedHeight = 0;
   const fittedRows = rows.filter((row) => {
-    const next = usedHeight + row.height + (usedHeight > 0 ? WORD_CLOUD_ROW_GAP : 0);
+    const next =
+      usedHeight + row.height + (usedHeight > 0 ? WORD_CLOUD_ROW_GAP : 0);
     if (next > availableHeight) return false;
     usedHeight = next;
     return true;
@@ -1418,7 +1419,9 @@ function forceDirectedLayout(
   const cooling = temperature / Math.max(1, iterations);
 
   for (let iter = 0; iter < iterations; iter++) {
-    const disp = new Map<string, SimPoint>(ids.map((id) => [id, { x: 0, y: 0 }]));
+    const disp = new Map<string, SimPoint>(
+      ids.map((id) => [id, { x: 0, y: 0 }]),
+    );
 
     for (let i = 0; i < ids.length; i++) {
       const a = nodes.get(ids[i] ?? "");
@@ -1512,7 +1515,8 @@ export function renderOrganicNetworkGraph(
   const labelColor = opts.labelColor ?? PALETTE.text;
 
   const centre = nodes.find((n) => n.id === target) ?? nodes[0];
-  if (!centre) return placeholderSvg("Sin dominios de referencia", { width, height });
+  if (!centre)
+    return placeholderSvg("Sin dominios de referencia", { width, height });
   const satellites = nodes.filter((n) => n.id !== centre.id);
   const cx = width / 2;
   const cy = height / 2;
@@ -1688,16 +1692,20 @@ export function renderAuthorityProfile(
 /* ----------------------------- VennDiagram --------------------------- */
 
 export type VennDatum = { label: string; value: number; color?: string };
-export type VennPair = { left: string; right: string; value: number };
+export type VennPair = {
+  left: string;
+  right: string;
+  value: number;
+  /** True when this lobe is a bound, not a measurement (see the competitors
+   *  service: there is no pairwise call between two competitors). It renders
+   *  as "≈" instead of a figure, because a bare 0 reads as measured. */
+  approximate?: boolean;
+};
 
 export type VennInput = {
-  /** Three ring "memberships", in order: primary, comp1, comp2. */
+  /** One membership per compared domain, in order: primary, comp1, comp2. */
   sets: VennDatum[];
-  /**
-   * Pairwise intersection counts (only the ones we actually have). Omit
-   * `comp1-comp2` when it's the approximated lobe (0 bound) — the renderer
-   * will read it from `comp1AndComp2` even when that's just the placeholder.
-   */
+  /** Pairwise intersection counts. Mark the ones we did not measure. */
   pairs?: VennPair[];
   /** Total keyword count for the headline label. */
   total?: number;
@@ -1706,59 +1714,145 @@ export type VennInput = {
 };
 
 /**
- * Hand-rolled 3-circle Venn diagram (SVG only — Recharts has no primitive).
+ * Proportional Venn diagram, one circle per compared domain (SVG only).
  *
- * Layout strategy (deterministic, no library needed):
- *  - viewport `width × height`
- *  - primary circle on top
- *  - comp1 left, comp2 right, both at the base
- *  - discs use 0.32 fill opacity so the overlap reads visually; the centre
- *    text labels stay OUTSIDE each circle (on the triangle's outer edge)
- *    so a single, primary colour does not muddy the legibility.
+ * **Area encodes magnitude**, which is the whole point of the figure: radius
+ * scales with √value, so a set ten times larger draws ten times the area. A
+ * fixed-radius Venn — what this drew before — says nothing at all, and the
+ * reference's own two circles are visibly different sizes.
+ *
+ * Centre distance is derived from the overlap: `d = r₁ + r₂ − 2·min(r₁,r₂)·f`
+ * where `f` is the share of the SMALLER set that sits in the intersection. It
+ * is an approximation of the true lens area — exact lens inversion buys
+ * nothing at this size — but it is monotonic, so more overlap always reads as
+ * more overlap.
+ *
+ * An empty set draws as a dashed minimum-radius outline rather than a filled
+ * disc, so a degraded report does not suggest volume it does not have.
  */
 export function renderVennDiagram(input: VennInput): string {
   const width = input.opts?.width ?? 360;
   const height = input.opts?.height ?? 280;
-  const sets = input.sets;
-  if (sets.length === 0) return placeholderSvg("Sin datos");
-
-  const radius = Math.min(width / 5.5, height / 4.2);
+  const sets = input.sets.slice(0, 3);
+  if (sets.length === 0) return placeholderSvg("No data");
 
   const cx = width / 2;
-  const cy = height / 2 - radius * 0.1;
+  const cy = height / 2 - 6;
+  const maxValue = Math.max(...sets.map((s) => Math.max(0, s.value)), 0);
+  // Leave room for the outside labels: the largest disc gets ~30% of the
+  // shorter side, which keeps a 3-circle layout inside the viewport.
+  const rMax = Math.min(width, height) * (sets.length > 2 ? 0.26 : 0.3);
+  const rMin = 10;
+  const radius = (value: number): number =>
+    maxValue <= 0
+      ? rMin
+      : Math.max(rMin, rMax * Math.sqrt(Math.max(0, value) / maxValue));
 
-  const tri = radius * 0.9;
-  const positions: Array<{ x: number; y: number }> = [
-    { x: cx, y: cy - tri * 0.55 }, // primary
-    { x: cx - tri * 0.7, y: cy + tri * 0.4 }, // comp1 (left)
-    { x: cx + tri * 0.7, y: cy + tri * 0.4 }, // comp2 (right)
-  ];
+  const radii = sets.map((s) => radius(s.value));
+
+  /** Share of the smaller set that sits in the intersection, 0..0.9. */
+  const overlapFactor = (i: number, j: number): number => {
+    const a = Math.max(0, sets[i]?.value ?? 0);
+    const b = Math.max(0, sets[j]?.value ?? 0);
+    const smaller = Math.min(a, b);
+    if (smaller <= 0) return 0.18;
+    const pair = (input.pairs ?? []).find(
+      (p) =>
+        (p.left === sets[i]?.label && p.right === sets[j]?.label) ||
+        (p.left === sets[j]?.label && p.right === sets[i]?.label),
+    );
+    if (!pair || pair.approximate) return 0.18;
+    return Math.min(0.9, Math.max(0, pair.value / smaller));
+  };
+
+  /** Centre distance for two discs given how much they share. */
+  const distance = (i: number, j: number): number => {
+    const ri = radii[i] ?? rMin;
+    const rj = radii[j] ?? rMin;
+    return Math.max(
+      Math.abs(ri - rj) + 6,
+      ri + rj - 2 * Math.min(ri, rj) * overlapFactor(i, j),
+    );
+  };
+
+  let groupLeft = 0;
+  let groupRight = width;
+  const positions: Array<{ x: number; y: number }> = [];
+  if (sets.length === 1) {
+    positions.push({ x: cx, y: cy });
+  } else if (sets.length === 2) {
+    const d = distance(0, 1);
+    positions.push({ x: cx - d / 2, y: cy }, { x: cx + d / 2, y: cy });
+  } else {
+    // Primary left; the two competitors stacked to its right, each placed at
+    // its own distance from the primary. The competitor-to-competitor lobe is
+    // the approximated one, so it is not what drives the geometry.
+    const d1 = distance(0, 1);
+    const d2 = distance(0, 2);
+    const px = cx - rMax * 0.55;
+    positions.push(
+      { x: px, y: cy },
+      { x: px + d1 * 0.92, y: cy - rMax * 0.42 },
+      { x: px + d2 * 0.92, y: cy + rMax * 0.42 },
+    );
+  }
+
+  // Centre the group on its own bounding box. Each layout above places circles
+  // relative to a nominal centre, but radii differ, so the drawn cluster drifts
+  // off-centre — visibly so when one set dwarfs the others.
+  if (positions.length > 0) {
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity;
+    positions.forEach((p, i) => {
+      const r = radii[i] ?? rMin;
+      minX = Math.min(minX, p.x - r);
+      maxX = Math.max(maxX, p.x + r);
+      minY = Math.min(minY, p.y - r);
+      maxY = Math.max(maxY, p.y + r);
+    });
+    const shiftX = cx - (minX + maxX) / 2;
+    const shiftY = cy - (minY + maxY) / 2;
+    positions.forEach((p) => {
+      p.x += shiftX;
+      p.y += shiftY;
+    });
+    groupLeft = minX + shiftX;
+    groupRight = maxX + shiftX;
+  }
 
   const defaultColors = [PALETTE.brand, PALETTE.accent, PALETTE.series3];
-  const overlayOpacity = 0.32;
+  const overlayOpacity = 0.42;
 
   const circles = sets
-    .slice(0, 3)
     .map((d, i) => {
       const pos = positions[i];
-      if (!pos) return "";
+      const r = radii[i];
+      if (!pos || r == null) return "";
       const fill = d.color ?? defaultColors[i] ?? PALETTE.brand;
-      return `<circle cx="${pos.x.toFixed(1)}" cy="${pos.y.toFixed(1)}" r="${radius.toFixed(1)}" fill="${fill}" fill-opacity="${overlayOpacity}" stroke="${fill}" stroke-width="1.5"/>`;
+      if (d.value <= 0) {
+        return `<circle cx="${pos.x.toFixed(1)}" cy="${pos.y.toFixed(1)}" r="${rMin.toFixed(1)}" fill="none" stroke="${fill}" stroke-width="1.5" stroke-dasharray="3 3"/>`;
+      }
+      return `<circle cx="${pos.x.toFixed(1)}" cy="${pos.y.toFixed(1)}" r="${r.toFixed(1)}" fill="${fill}" fill-opacity="${overlayOpacity}" stroke="${fill}" stroke-width="1.5"/>`;
     })
     .join("");
 
   const labels = sets
-    .slice(0, 3)
     .map((d, i) => {
       const pos = positions[i];
-      if (!pos) return "";
-      const dx = pos.x - cx;
-      const dy = pos.y - cy;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const lx = pos.x + (dx / len) * (radius + 18);
-      const ly = pos.y + (dy / len) * (radius + 18);
+      const r = radii[i];
+      if (!pos || r == null) return "";
+      // Labels sit OUTSIDE the whole group, in two columns: the primary on the
+      // left, the competitors on the right, each at its own circle's height.
+      // Anchoring to the individual circle instead drops a small circle's
+      // label straight onto the disc that contains it.
+      const toLeft = sets.length === 1 ? false : i === 0;
+      const lx = toLeft ? groupLeft - 12 : groupRight + 12;
+      const ly = pos.y + 4;
+      const anchor = toLeft ? "end" : "start";
       const text = `${escapeXml(truncate(d.label, 18))}: ${formatNumberCompact(d.value)}`;
-      return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="11" fill="${PALETTE.text}" font-weight="600">${text}</text>`;
+      return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anchor}" font-size="11" fill="${PALETTE.text}" font-weight="600">${text}</text>`;
     })
     .join("");
 
@@ -1771,14 +1865,17 @@ export function renderVennDiagram(input: VennInput): string {
       const b = positions[idxB];
       if (!a || !b) return "";
       const mx = (a.x + b.x) / 2;
-      const my = (a.y + b.y) / 2 - 4;
-      return `<text x="${mx.toFixed(1)}" y="${my.toFixed(1)}" text-anchor="middle" font-size="10" fill="${PALETTE.muted}">∩ ${formatNumberCompact(p.value)}</text>`;
+      const my = (a.y + b.y) / 2 + 3;
+      // An approximated lobe never shows a figure: "≈" says we did not measure
+      // it, where "∩ 0" would claim we did.
+      const text = p.approximate ? "≈" : `∩ ${formatNumberCompact(p.value)}`;
+      return `<text x="${mx.toFixed(1)}" y="${my.toFixed(1)}" text-anchor="middle" font-size="10" fill="${PALETTE.muted}">${text}</text>`;
     })
     .join("");
 
   const headline =
     typeof input.total === "number"
-      ? `<text x="${cx}" y="${(height - 18).toFixed(1)}" text-anchor="middle" font-size="11" fill="${PALETTE.muted}">${formatNumberCompact(input.total)} keywords en juego</text>`
+      ? `<text x="${cx}" y="${(height - 12).toFixed(1)}" text-anchor="middle" font-size="11" fill="${PALETTE.muted}">${formatNumberCompact(input.total)} keywords in play</text>`
       : "";
 
   return svg(width, height, `${circles}${labels}${pairLabels}${headline}`);

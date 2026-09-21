@@ -245,34 +245,41 @@ describe("charts · pure SVG helpers", () => {
 });
 
 describe("charts · E2 venn + donut", () => {
-  it("renderVennDiagram returns three overlapping <circle>s + count labels", () => {
+  it("renderVennDiagram sizes each circle by its set, area-proportional", () => {
     const svg = renderVennDiagram({
       sets: [
-        { label: "primary.com", value: 1200, color: "#1f6feb" },
-        { label: "comp1.com", value: 540, color: "#14b8a6" },
-        { label: "comp2.com", value: 410, color: "#f59e0b" },
+        { label: "primary.com", value: 1200, color: "#6868d8" },
+        { label: "comp1.com", value: 300, color: "#14b8a6" },
       ],
-      pairs: [
-        { left: "primary.com", right: "comp1.com", value: 80 },
-        { left: "primary.com", right: "comp2.com", value: 60 },
-        { left: "comp1.com", right: "comp2.com", value: 0 },
-      ],
-      total: 2150,
+      pairs: [{ left: "primary.com", right: "comp1.com", value: 80 }],
+      total: 1420,
     });
     expect(svg.startsWith("<svg")).toBe(true);
-    // Three rings.
-    const circles = (svg.match(/<circle /g) ?? []).length;
-    expect(circles).toBeGreaterThanOrEqual(3);
-    // Domain labels + pair intersection labels.
     expect(svg).toContain("primary.com");
     expect(svg).toContain("comp1.com");
-    expect(svg).toContain("comp2.com");
     expect(svg).toContain("∩");
+    // A set 4x larger draws a circle 2x the radius (area scales with value).
+    const radii = [...svg.matchAll(/ r="([\d.]+)"/g)].map((m) => Number(m[1]));
+    expect(radii).toHaveLength(2);
+    const [big, small] = [Math.max(...radii), Math.min(...radii)];
+    expect(big / small).toBeCloseTo(2, 1);
+  });
+
+  it("renderVennDiagram renders an approximated lobe as ≈, not as a count", () => {
+    const svg = renderVennDiagram({
+      sets: [
+        { label: "a.com", value: 100 },
+        { label: "b.com", value: 80 },
+      ],
+      pairs: [{ left: "a.com", right: "b.com", value: 0, approximate: true }],
+    });
+    expect(svg).toContain("≈");
+    expect(svg).not.toContain("∩ 0");
   });
 
   it("renderVennDiagram placeholder for empty sets", () => {
     // No sets → no overlap math, fall back to placeholder.
-    expect(renderVennDiagram({ sets: [] })).toContain("Sin datos");
+    expect(renderVennDiagram({ sets: [] })).toContain("No data");
   });
 
   it("renderDonutChart reuses renderPieChart's hollow centre and accepts a centerLabel", () => {
