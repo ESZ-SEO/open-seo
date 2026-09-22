@@ -31,6 +31,10 @@
  *
  * Step 2 is the real work and the reason this is a product decision rather
  * than a refactor.
+ *
+ * The MCP tool `render_report_image` does not change that: it renders for
+ * internal use, so it meters no credits either, and the spend it can cause is
+ * bounded by `render-budget.ts` instead of billed. Decided 2026-09-22.
  */
 import {
   fetchKeywordSuggestions,
