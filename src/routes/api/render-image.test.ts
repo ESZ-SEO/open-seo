@@ -31,9 +31,7 @@ vi.mock("@/server/features/projects/repositories/ProjectRepository", () => ({
 // Partial mock: the route parses with the real `renderParamsSchema`, and
 // `renderReport` is here only so the tests can prove it is never reached.
 vi.mock("@/server/lib/render/render-report", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/server/lib/render/render-report")
-  >()),
+  ...(await importOriginal<Record<string, unknown>>()),
   renderReport: mocks.renderReport,
 }));
 
@@ -113,18 +111,18 @@ describe("GET /api/render-image", () => {
   it.each([
     { mode: "hosted", status: 302 },
     { mode: "cloudflare_access", status: 401 },
-  ])("answers $status to a request with no session ($mode)", async ({
-    mode,
-    status,
-  }) => {
-    mockEnv.AUTH_MODE = mode;
-    mocks.resolveUserContextFromHeaders.mockRejectedValue(
-      new AppError("UNAUTHENTICATED"),
-    );
+  ])(
+    "answers $status to a request with no session ($mode)",
+    async ({ mode, status }) => {
+      mockEnv.AUTH_MODE = mode;
+      mocks.resolveUserContextFromHeaders.mockRejectedValue(
+        new AppError("UNAUTHENTICATED"),
+      );
 
-    const response = await get();
+      const response = await get();
 
-    expect(response.status).toBe(status);
-    expect(mocks.r2Get).not.toHaveBeenCalled();
-  });
+      expect(response.status).toBe(status);
+      expect(mocks.r2Get).not.toHaveBeenCalled();
+    },
+  );
 });

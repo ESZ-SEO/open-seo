@@ -20,9 +20,7 @@ vi.mock("@/server/features/projects/services/ProjectService", () => ({
 // `renderParamsSchema` owns defaults and competitor normalization here exactly
 // as it does in production, and the real `RenderError` is the one thrown.
 vi.mock("@/server/lib/render/render-report", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/server/lib/render/render-report")
-  >()),
+  ...(await importOriginal<Record<string, unknown>>()),
   renderReport: mocks.renderReport,
 }));
 vi.mock("@/server/lib/render/render-budget", () => ({
@@ -98,9 +96,7 @@ describe("render_report_image", () => {
       expect.objectContaining({ competitors: ["a.com", "b.com"] }),
     );
     expect(result.structuredContent.competitors).toEqual(["a.com", "b.com"]);
-    expect(result.structuredContent.url).toContain(
-      "competitors=a.com%2Cb.com",
-    );
+    expect(result.structuredContent.url).toContain("competitors=a.com%2Cb.com");
   });
 
   it.each([
