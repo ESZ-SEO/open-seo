@@ -28,7 +28,18 @@ function captureLinkErrorFromLocation(): CapturedLinkError | null {
   const url = new URL(window.location.href);
   const provider = url.searchParams.get(GOOGLE_LINK_ERROR_PARAM);
   if (provider !== "gsc" && provider !== "ga4") return null;
-  const code = url.searchParams.get("error") ?? "unknown";
+  // OAuth can append &error= after an existing #connect-gsc anchor.
+  // Retain the anchor so the dashboard can reopen the connection step.
+  const [anchor, ...fragmentParts] = url.hash.slice(1).split("&");
+  const fragmentParams = new URLSearchParams(fragmentParts.join("&"));
+  const code =
+    url.searchParams.get("error") ?? fragmentParams.get("error") ?? "unknown";
+  if (fragmentParams.has("error") || fragmentParams.has("error_description")) {
+    fragmentParams.delete("error");
+    fragmentParams.delete("error_description");
+    const remaining = fragmentParams.toString();
+    url.hash = `${anchor}${remaining ? `&${remaining}` : ""}`;
+  }
   url.searchParams.delete(GOOGLE_LINK_ERROR_PARAM);
   url.searchParams.delete("error");
   url.searchParams.delete("error_description");

@@ -27,6 +27,7 @@ export async function getLatestResults(
   run: {
     id: string;
     lastCheckedAt: string | null;
+    completedAt: string | null;
     status: "pending" | "running" | "completed" | "failed";
     errorMessage: string | null;
   } | null;
@@ -100,6 +101,7 @@ export async function getLatestResults(
       {
         trackingKeywordId: keyword.id,
         keyword: keyword.keyword,
+        matchCase: keyword.matchCase,
         searchVolume: keyword.searchVolume,
         keywordDifficulty: keyword.keywordDifficulty,
         cpc: keyword.cpc,
@@ -137,7 +139,10 @@ export async function getLatestResults(
     run: latestRun
       ? {
           id: latestRun.id,
+          // Snapshot-derived: a run that saved zero snapshots leaves this
+          // null even though it finished, so read completedAt for the run.
           lastCheckedAt: latestStartedAt,
+          completedAt: latestRun.completedAt,
           status: latestRun.status,
           errorMessage: latestRun.errorMessage,
         }

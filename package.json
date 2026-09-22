@@ -2,12 +2,11 @@
   "name": "open-seo",
   "private": true,
   "sideEffects": false,
-  "version": "0.1.7",
+  "version": "0.1.9",
   "type": "module",
   "packageManager": "pnpm@10.30.1",
   "scripts": {
     "dev": "vite dev",
-    "dev:clear-chat": "rm -rf .wrangler/state/v3/do/open-seo-OnboardingChatAgent",
     "dev:agents": "mkdir -p .logs && portless run vite dev 2>&1 | tee .logs/dev-server.log",
     "dev:agents:force": "mkdir -p .logs && portless --force run vite dev 2>&1 | tee .logs/dev-server.log",
     "build": "vite build && tsc --noEmit",
@@ -43,6 +42,7 @@
     "test:watch": "vitest",
     "test:ci": "vitest run --reporter=dot",
     "test:e2e": "playwright test",
+    "test:e2e:free-tools": "playwright test --config playwright.free-tools.config.ts",
     "test:e2e:domain": "playwright test e2e/domain-overview-filters.spec.ts",
     "test:e2e:domain:perf": "playwright test e2e/domain-overview-filters.perf.spec.ts",
     "test:e2e:keywords": "playwright test e2e/keyword-research-navigation.spec.ts",
@@ -56,6 +56,7 @@
     "preview:competitors": "tsx scripts/preview-competitors-report.ts",
     "preview:keywords": "tsx scripts/preview-keywords-report.ts",
     "preview:overview": "tsx scripts/preview-overview-report.ts",
+    "repair:rank-locations": "tsx scripts/repair-rank-tracking-locations.ts",
     "seed:rank-tracking": "tsx scripts/seed-rank-tracking.ts",
     "seed:projects": "tsx scripts/seed-projects.ts",
     "ci:check": "prettier --check . && knip && tsc --noEmit && tsc --noEmit -p badseo/tsconfig.json && tsc --noEmit -p renderer/tsconfig.json && oxlint . --type-aware && pnpm sync-plugin-skills && test -z \"$(git status --porcelain -- plugins/openseo/skills)\""
@@ -82,8 +83,7 @@
   "dependencies": {
     "@ai-sdk/react": "^3.0.211",
     "@better-auth/api-key": "1.6.22",
-    "@cloudflare/ai-chat": "^0.10.1",
-    "@cloudflare/think": "0.15.1",
+    "@cloudflare/think": "0.17.0",
     "@cloudflare/workers-oauth-provider": "^0.10.2",
     "@every-app/sdk": "^0.1.14",
     "@modelcontextprotocol/client": "2.0.0",
@@ -97,7 +97,7 @@
     "@tanstack/react-router-devtools": "^1.167.0",
     "@tanstack/react-start": "^1.168.26",
     "@tanstack/react-table": "^8.21.3",
-    "agents": "0.20.1",
+    "agents": "0.22.0",
     "ai": "^6.0.199",
     "autumn-js": "^1.2.33",
     "better-auth": "^1.6.22",
@@ -122,6 +122,7 @@
     "robots-parser": "^3.0.1",
     "sonner": "^2.0.7",
     "tailwindcss": "^4.1.16",
+    "takumi-js": "2.13.7",
     "tldts": "^7.0.25",
     "yaml": "^2.9.0",
     "zod": "^4.1.12"
@@ -155,7 +156,7 @@
     "typescript": "^5.9.3",
     "vite": "^7.3.6",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.6",
+    "vitest": "^4.1.11",
     "wrangler": "^4.105.0"
   }
 }

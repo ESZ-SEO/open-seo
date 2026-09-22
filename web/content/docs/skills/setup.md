@@ -56,11 +56,11 @@ git clone https://github.com/every-app/open-seo.git
 
 # Codex
 mkdir -p ~/.codex/skills
-cp -R open-seo/.agents/skills/* ~/.codex/skills/
+cp -R open-seo/plugins/openseo/skills/* ~/.codex/skills/
 
 # Claude Code
 mkdir -p ~/.claude/skills
-cp -R open-seo/.agents/skills/* ~/.claude/skills/
+cp -R open-seo/plugins/openseo/skills/* ~/.claude/skills/
 ```
 
 You can also review the source skills on GitHub:
@@ -68,6 +68,10 @@ You can also review the source skills on GitHub:
 - [OpenSEO Agent Skills on GitHub](https://github.com/every-app/open-seo/tree/main/.agents/skills)
 
 Each skill page also links to its source `SKILL.md`.
+
+## Update installed skills
+
+Use the [update prompt or commands for your installation method](/docs/agent-setup#update-your-skills). Update the OpenSEO plugin if it supplies your skills; otherwise use the installer you originally chose or update your manual copies.
 
 ## Run a skill
 
