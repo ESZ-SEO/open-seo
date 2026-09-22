@@ -1,8 +1,13 @@
 # Render Reports API
 
 Generates branded PNG snapshots of SEO reports (Backlinks, Competitors, Domain
-Overview) for embedding into automated documents. Designed to be called by
-n8n over plain HTTP GET — no custom SDK, no headers beyond the bearer token.
+Overview, Keyword Research) for embedding into automated documents. Designed to
+be called by n8n over plain HTTP GET — no custom SDK, no headers beyond the
+bearer token.
+
+AI agents reach the same renders through the MCP tool `render_report_image`
+instead, which uses the agent's own session rather than the shared token — see
+[MCP access](#mcp-access).
 
 The endpoint is a thin Cloudflare Worker handler that orchestrates a
 dedicated Puppeteer/Chromium microservice to render the report HTML and
@@ -106,9 +111,16 @@ single-domain view (no comparison panel). Implemented in E2.
 `report=overview` — one-page Domain Overview summary: 5 KPI tiles, country
 distribution table, two charts. Implemented in E3.
 
+### Keyword Research report
+
+`report=keywords` — the keyword-research table for a seed phrase: topic rail,
+summary bar, and the highest-volume ideas. The seed is `keyword` when it is
+supplied and `domain` otherwise, so this is the one report whose subject is not
+a domain. Implemented in E5.
+
 ## Examples
 
-All three report types, called against the local dev stack
+Called against the local dev stack
 (`pnpm dev` on port 3001, with `RENDERER_URL=http://localhost:3100` pointing
 at a running `renderer/` microservice and `RENDER_API_TOKEN=test-token`).
 
@@ -271,6 +283,71 @@ exempt.
 
 Like the invitation limiter it is modelled on, these are abuse bounds rather
 than exact quotas: KV counters race under concurrency.
+
+## MCP access
+
+AI agents connected over MCP do not call `/api/render/`. They call the tool
+`render_report_image`, which renders through the same pipeline and the same
+cache, and answers with a **link** to the image rather than the image itself —
+a 100 KB PNG base64'd into a tool response costs roughly 30,000 tokens, and the
+agent cannot do anything with the bytes that the link does not let it do.
+
+**Agents never receive `RENDER_API_TOKEN`.** The tool authorizes on the agent's
+own MCP session and the `projectId` it was given: the caller must be a member of
+the organization that owns that project. The shared secret stays between the app
+and n8n.
+
+Tool arguments are the report coordinates above, plus the required `projectId`.
+Two differences from the HTTP endpoint, both deliberate:
+
+- `country` must be a two-letter code. An unrecognised market silently falls
+  back to Spain, which is a fine default for a form and a wrong answer for an
+  agent, so the tool rejects what the endpoint would have accepted.
+- `competitors` is a real JSON array, not CSV. It is still deduplicated, sorted
+  and capped at two before rendering.
+
+The tool returns `url`, `report`, `subject`, `country`, `device`, `competitors`
+and `imageBytes`. `subject` is what the report is about — the domain, or the
+seed on a `keywords` report.
+
+### Reading the image back
+
+```
+GET /api/render-image?projectId=…&report=…&domain=…&country=…&device=…[&keyword=…][&competitors=a.com,b.com]
+```
+
+This is the link the tool returns. It serves the durable R2 copy the render
+pipeline wrote, to a signed-in member of the project's organization.
+
+| Status | Body                    | When                                                       |
+| ------ | ----------------------- | ---------------------------------------------------------- |
+| 200    | `image/png`             | Reader belongs to the project's org and the image exists   |
+| 302    | → `/sign-in?redirect=…` | Hosted mode, no session                                    |
+| 401    | `text/plain`            | Self-hosted modes, no session (no sign-in page to send to) |
+| 400    | `text/plain`            | Parameters fail validation                                 |
+| 404    | `text/plain`            | Unknown project, another org's project, or no such image   |
+
+**It never renders.** A route that re-rendered on a miss would let anyone with a
+browser session spend on report data by refreshing, so a missing image is a 404
+that points back at the tool.
+
+Anyone in the project's organization can read any rendered image whose
+coordinates they can name. That is exactly what calling the tool themselves would
+get them, so it grants nothing new — and the R2 key is _not_ a secret: it is an
+unsalted hash of the coordinates. Organization membership is the whole of the
+access control.
+
+### Render budget
+
+Renders are not billed to anyone's credit balance (the render path calls
+DataForSEO directly), so instead of a price there is a brake: **20 renders per
+organization per hour and 100 per day**, counted in KV. An agent that hits the
+limit gets a `RATE_LIMITED` error naming when rendering resumes; links to images
+already rendered keep working. Repeating a render with identical coordinates is
+served from cache and does not count against it.
+
+The limits are abuse bounds, not exact quotas — concurrent renders can race the
+counter. They exist to stop a runaway loop, not to ration normal use.
 
 ## Limitations
 
