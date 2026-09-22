@@ -60,13 +60,14 @@ request when no secret is set, never permits open access.
 All parameters are query-string. `report` and `domain` are required; the rest
 have product defaults.
 
-| Name          | Required | Type                                          | Default   | Example                   |
-| ------------- | -------- | --------------------------------------------- | --------- | ------------------------- |
-| `report`      | yes      | `backlinks` \| `competitors` \| `overview`    | —         | `report=backlinks`        |
-| `domain`      | yes      | string (trimmed, non-empty)                   | —         | `domain=example.com`      |
-| `country`     | no       | string (trimmed, non-empty)                   | `ES`      | `country=US`              |
-| `device`      | no       | `desktop` \| `mobile` \| `tablet`             | `desktop` | `device=mobile`           |
-| `competitors` | no       | CSV (max 2, deduped, self-references dropped) | —         | `competitors=a.com,b.com` |
+| Name          | Required | Type                                                     | Default   | Example                   |
+| ------------- | -------- | -------------------------------------------------------- | --------- | ------------------------- |
+| `report`      | yes      | `backlinks` \| `competitors` \| `overview` \| `keywords` | —         | `report=backlinks`        |
+| `domain`      | yes      | string (trimmed, non-empty)                              | —         | `domain=example.com`      |
+| `keyword`     | no       | string (trimmed, non-empty)                              | —         | `keyword=seo%20tools`     |
+| `country`     | no       | string (trimmed, non-empty)                              | `ES`      | `country=US`              |
+| `device`      | no       | `desktop` \| `mobile` \| `tablet`                        | `desktop` | `device=mobile`           |
+| `competitors` | no       | CSV (max 2, deduped, self-references dropped)            | —         | `competitors=a.com,b.com` |
 
 `competitors` is only consulted when `report=competitors`. When omitted on a
 `competitors` report, the report degrades to a single-domain view
@@ -82,7 +83,7 @@ return `400 INVALID_PARAMS`:
 ```bash
 $ curl -H "Authorization: Bearer test-token" \
     "http://localhost:3001/api/render/?report=algo-invalido&domain=example.com&country=ES&device=desktop"
-{"error":"INVALID_PARAMS","details":{"formErrors":[],"fieldErrors":{"report":["Invalid option: expected one of \"backlinks\"|\"competitors\"|\"overview\""]}}}
+{"error":"INVALID_PARAMS","details":{"formErrors":[],"fieldErrors":{"report":["Invalid option: expected one of \"backlinks\"|\"competitors\"|\"overview\"|\"keywords\""]}}}
 ```
 
 ## Report types
@@ -189,6 +190,7 @@ hard — physical cleanup is deferred to E5.2.
 | `backlinks`   | 30 days      |
 | `competitors` | 15 days      |
 | `overview`    | 7 days       |
+| `keywords`    | 7 days       |
 
 Empirical cache-hit speedup (same `report=backlinks&domain=example.com&...`):
 
@@ -222,6 +224,53 @@ cache would otherwise need to honour).
 `502` is the only status that surfaces a `detail` field — it carries the
 renderer-side error message for diagnostics. The other JSON errors are
 stable contracts.
+
+## MCP access for agents
+
+Agents reach the renderer through the MCP tool `render_report_image` instead of
+this endpoint. **An agent never receives `RENDER_API_TOKEN`** — the tool
+authenticates with the MCP session and authorizes against the project's
+organization, so the shared secret stays server-side and machine-to-machine.
+
+The tool returns a **link, never the image**. An 83-134 KB PNG base64s to
+roughly 28,000-45,000 tokens, and an MCP response carries its payload twice, so
+inlining one would swallow an agent's context for a picture it cannot read.
+
+|           |                                                                                                                                           |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Tool      | `render_report_image`                                                                                                                     |
+| Arguments | `projectId` plus the same coordinates as above: `report`, `domain`, `keyword`, `country`, `device`, `competitors` (a real array, not CSV) |
+| Returns   | `url`, `report`, `subject`, `country`, `device`, `competitors`, `imageBytes`                                                              |
+
+### Reading the image back
+
+```
+GET /api/render-image?projectId=...&report=...&domain=...&country=...&device=...
+```
+
+Serves the durable copy the pipeline writes to `rendered/<report>/<key>.png`,
+to a signed-in member of the owning organization. It **never renders**: a miss
+returns 404 rather than regenerating, because a route that re-renders is a
+spend surface anyone can hit by refreshing. Regenerating goes back through the
+tool, where the brake lives.
+
+This route is not a capability URL. The cache key is an unsalted hash of the
+coordinates, so anyone who knows the domain can compute it — the organization
+check is the whole of the security.
+
+### Spend protection
+
+Renders are **not metered against any credit balance** (see the METERING block
+in `src/server/lib/render/reports/keywords-report.ts`): this is an internal
+system, so attributing cost between our own organizations buys nothing. The
+real risk is an agent looping on a bad prompt, so `render-budget.ts` caps
+renders per organization at **20 per hour** and **100 per day**, refusing with
+`RATE_LIMITED` _before_ anything is rendered. Normal use — an agent producing a
+report — never approaches either bound. Reading an image back is free and
+exempt.
+
+Like the invitation limiter it is modelled on, these are abuse bounds rather
+than exact quotas: KV counters race under concurrency.
 
 ## Limitations
 
