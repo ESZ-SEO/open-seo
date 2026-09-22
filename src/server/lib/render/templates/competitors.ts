@@ -1,53 +1,62 @@
-/* eslint-disable max-lines, max-lines-per-function -- Competitors template mirrors the spec's KPI-table + 3-charts + keyword-gap + Venn layout; splitting would fragment the visual section narrative across files. */
+/* eslint-disable max-lines, max-lines-per-function -- Competitors template mirrors the reference's shell + KPI table + 3 cards + opportunities + Venn layout; splitting would fragment the visual section narrative across files. */
 import type { ReportKind } from "@/server/lib/render/cache";
 import type {
   CompetitorRow,
   CompetitorsReportData,
   KeywordGapRow,
+  TrendSeries,
   VennCounts,
 } from "@/server/lib/render/reports/competitors-report";
 import {
-  renderDonutChart,
+  renderMultiLineChart,
   renderVennDiagram,
 } from "@/server/lib/render/charts/charts";
 
 /**
- * Competitors report template (E2).
+ * Compare Domains template (E2, brought to visual parity 2026-09-21).
  *
- * Self-contained HTML sent to a headless browser for screenshotting, mirroring
- * the structure of `templates/backlinks.ts` (inline `<style>`, no external
- * CSS, brand palette, lucide-style inline SVG icons). Follows spec §6.3 +
- * Anexo A.2:
+ * Self-contained HTML sent to a headless browser for screenshotting. The
+ * parity backlog it implements lives in
+ * `.dev/designer/semrush-competitors-ui-parity-pack-2026-09-21/`; the design
+ * system it adopts is the measured one from `templates/overview.ts`.
  *
- *   - Header chips: primary + up to 2 competitor domains.
- *   - KPI table — one row per domain, columns:
- *       Authority · Ranking · Tráfico orgánico · Palabras clave org. ·
- *       Backlinks · Dominios ref. · Palabras clave de pago · Coste tráfico
- *       de pago.
- *   - 3 charts in a row: Donut "Cuota de tráfico" · "Sin marca / De marca"
- *     bars · "De pago / Orgánico" bars.
- *   - Keyword gap: tabs-equivalent "Faltantes" + "Débiles" rendered as two
- *     stacked tables (the renderer is JS-free, so we render both; visual
- *     separation carries the meaning, see spec A.2).
- *   - Venn diagram — 3 circles with pairwise ∩ markers + per-domain count.
- *   - Footer.
+ * **The medium is a static PNG.** No JavaScript, no event handlers, no hover,
+ * no client state: everything that looks like a control here — the query bar,
+ * the market pills, the competitor slots, Compare/Cancel, the Missing|Weak
+ * tabs, View details — is markup drawn to look like one. Where the reference
+ * has a real toggle, we take a render parameter and draw one state, the same
+ * way `searchMode` works in `overview.ts`.
  *
- * Layout follows the 1280px screenshot width (matches the renderer viewport).
+ * Two things the reference does that we deliberately do NOT copy, both for the
+ * same reason (never fabricate a number):
+ *
+ *  - **Trend arrows.** Its ↑/↓ figures are deltas against a history this
+ *    pipeline does not have.
+ *  - **A competitor-to-competitor intersection count.** The service has no
+ *    pairwise call between two competitors, so that Venn lobe renders "≈"
+ *    rather than the `0` the bound would print.
  */
+
 const REPORT_TITLES: Record<ReportKind, string> = {
-  backlinks: "Informe de backlinks",
-  competitors: "Comparación de dominios",
-  overview: "Visión general del dominio",
+  backlinks: "Backlink Analytics",
+  competitors: "Compare Domains",
+  overview: "Domain Overview",
   // Present only to satisfy the exhaustive map: this template never renders
   // the keyword report, which has its own (see `templates/keywords.ts`).
-  keywords: "Investigación de keywords",
+  keywords: "Keyword Research",
 };
 
 const DEVICE_LABELS: Record<string, string> = {
-  desktop: "Escritorio",
-  mobile: "Móvil",
+  desktop: "Desktop",
+  mobile: "Mobile",
   tablet: "Tablet",
 };
+
+/** Market pills the header draws, in the reference's own order. */
+const MARKET_PILLS = ["US", "UK", "DE"] as const;
+
+/** The reference always shows five competitor slots, filled or not. */
+const COMPETITOR_SLOTS = 5;
 
 export type CompetitorsTemplateInput = {
   report: ReportKind;
@@ -55,7 +64,30 @@ export type CompetitorsTemplateInput = {
   country: string;
   device: string;
   data: CompetitorsReportData;
+  /** Flag SVG markup by ISO alpha-2 code, resolved by the caller via
+   *  `loadCountryFlags`. Required rather than defaulted, for the same reason
+   *  the keyword report requires it: a template that quietly renders no flag
+   *  when nobody passes one is how flags go missing. */
+  flags: Record<string, string>;
+  /** Which opportunities tab is rendered. A render parameter, not state. */
+  opportunitiesTab?: "missing" | "weak";
+  /** Date shown in the market row. ISO date; defaults to today. */
+  reportDate?: string;
 };
+
+/**
+ * The flag codes this report can draw. Exported so `render-report.ts` loads
+ * exactly these and the two cannot drift apart.
+ *
+ * Note the artwork code for the "UK" label is `GB` — asking for "UK" returns
+ * nothing, silently.
+ */
+export function competitorsFlagCodes(country: string): string[] {
+  const codes = new Set<string>(["US", "GB", "DE"]);
+  const own = country.trim().toUpperCase();
+  if (own.length === 2) codes.add(own === "UK" ? "GB" : own);
+  return [...codes];
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -66,297 +98,562 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const NUMBER_FMT = new Intl.NumberFormat("es-ES", {
+/* ----------------------------- formatting ----------------------------- */
+
+const EXACT_FMT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-const PERCENT_FMT = new Intl.NumberFormat("es-ES", {
-  style: "percent",
-  maximumFractionDigits: 0,
-});
-
-function fmtNumber(value: number | null): string {
-  return value == null ? "—" : NUMBER_FMT.format(value);
+/**
+ * Abbreviated figures, en-US. A nine-digit number at table size is what blows
+ * a column's width budget; the exact value rides along in `title`.
+ *
+ * (That `title` never shows in a PNG — nothing hovers a screenshot. It costs
+ * nothing, keeps the markup honest for any future HTML surface, and the
+ * abbreviation is what actually matters here.)
+ */
+function compact(value: number | null): string {
+  if (value == null) return "—";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${trimZero(value / 1_000_000)}M`;
+  if (abs >= 1_000) return `${trimZero(value / 1_000)}K`;
+  return EXACT_FMT.format(value);
 }
 
-function fmtPercent(value: number | null): string {
-  return value == null ? "—" : PERCENT_FMT.format(value);
+function trimZero(value: number): string {
+  const s = value.toFixed(1);
+  return s.endsWith(".0") ? s.slice(0, -2) : s;
 }
 
-function truncateDomain(input: string, max = 32): string {
+function exact(value: number | null): string {
+  return value == null ? "" : EXACT_FMT.format(value);
+}
+
+function money(value: number | null, currency: string): string {
+  if (value == null) return "—";
+  const symbol = currency === "USD" ? "$" : "";
+  return `${symbol}${compact(value)}`;
+}
+
+function percent(value: number | null): string {
+  return value == null ? "—" : `${Math.round(value * 100)}%`;
+}
+
+function truncate(input: string, max: number): string {
   return input.length <= max ? input : `${input.slice(0, max - 1)}…`;
 }
 
-// Brand colours for the 3 domains (primary + up to 2 competitors).
-const ROLE_COLORS = {
-  primary: "#1f6feb",
-  comp1: "#14b8a6",
-  comp2: "#f59e0b",
-} as const;
-
-function roleColor(role: "primary" | "competitor", index: number): string {
-  if (role === "primary") return ROLE_COLORS.primary;
-  return index === 1 ? ROLE_COLORS.comp1 : ROLE_COLORS.comp2;
+/** A numeric cell: abbreviated text, exact value in `title`, or an em dash. */
+function numCell(value: number | null, text?: string): string {
+  if (value == null) return `<td class="num">—</td>`;
+  return `<td class="num" title="${exact(value)}">${text ?? compact(value)}</td>`;
 }
 
-/* ---------- KPI table ---------- */
+/* ------------------------------- colours ------------------------------ */
 
-function kpiRowCells(row: CompetitorRow, idx: number): string {
-  const tone = roleColor(row.role, idx);
+/** Series colours, one per compared domain. Periwinkle for the primary and
+ *  mint for the first competitor mirror the measured system; the third is the
+ *  amber this report already used for a second competitor. */
+const SERIES_COLORS = ["#6868d8", "#14b8a6", "#f59e0b"] as const;
+
+function seriesColor(index: number): string {
+  return SERIES_COLORS[Math.min(index, SERIES_COLORS.length - 1)] as string;
+}
+
+/* -------------------------------- icons ------------------------------- */
+
+const ICON_GLOBE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 0 20a15.3 15.3 0 0 1 0-20"/></svg>`;
+const ICON_MONITOR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`;
+const ICON_CALENDAR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`;
+const ICON_CHEVRON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`;
+const ICON_EXTERNAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>`;
+const ICON_INFO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>`;
+const ICON_EXPORT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5M12 5v12"/></svg>`;
+const ICON_CLEAR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>`;
+
+/* ------------------------------- header ------------------------------- */
+
+function flagMarkup(flags: Record<string, string>, code: string): string {
+  const svg = flags[code === "UK" ? "GB" : code];
+  return svg ? `<span class="flag">${svg}</span>` : "";
+}
+
+type HeaderBandInput = {
+  title: string;
+  domain: string;
+  country: string;
+  deviceLabel: string;
+  flags: Record<string, string>;
+  dateLabel: string;
+};
+
+function headerBand({
+  title,
+  domain,
+  country,
+  deviceLabel,
+  flags,
+  dateLabel,
+}: HeaderBandInput): string {
+  const own = country.trim().toUpperCase();
+  const pills = MARKET_PILLS.map(
+    (code) =>
+      `<span class="pill${code === own ? " pill--on" : ""}">${flagMarkup(flags, code)}${code}</span>`,
+  ).join("");
+  // The report's own market, when it is not already one of the three shown.
+  const ownPill =
+    own.length === 2 && !(MARKET_PILLS as readonly string[]).includes(own)
+      ? `<span class="pill pill--on">${flagMarkup(flags, own)}${escapeHtml(own)}</span>`
+      : "";
+
   return `
-    <tr style="--row-color:${tone};">
-      <td>
-        <div class="domain-cell">
-          <span class="domain-dot" style="background:${tone}"></span>
-          <span>${escapeHtml(row.domain)}</span>
-          ${row.role === "primary" ? '<span class="badge">Principal</span>' : ""}
-        </div>
-      </td>
-      <td class="num">${row.authority.source === "ok" ? String(row.authority.value) : "—"}</td>
-      <td class="num">${fmtNumber(row.rank.value)}</td>
-      <td class="num">${fmtNumber(row.organicTraffic.value)}</td>
-      <td class="num">${fmtNumber(row.organicKeywords.value)}</td>
-      <td class="num">${fmtNumber(row.backlinks.value)}</td>
-      <td class="num">${fmtNumber(row.referringDomains.value)}</td>
-      <td class="num">${fmtNumber(row.paidKeywords.value)}</td>
-      <td class="num">${row.paidTrafficCost.value != null ? `$${fmtNumber(row.paidTrafficCost.value)}` : "—"}</td>
-    </tr>`;
+  <div class="query-bar">
+    <span class="query-input">${escapeHtml(domain)}<span class="query-clear">${ICON_CLEAR}</span></span>
+    <span class="query-scope">Root Domain ${ICON_CHEVRON}</span>
+    <span class="query-go">Analyze</span>
+  </div>
+  <nav class="crumbs">Home <span>›</span> SEO <span>›</span> Domain Overview <span>›</span> <b>${escapeHtml(title)}</b></nav>
+  <h1>${escapeHtml(title)}: <span class="h1-domain">${escapeHtml(domain)}</span> <span class="h1-ext">${ICON_EXTERNAL}</span></h1>
+  <div class="market-row">
+    <span class="pill pill--globe">${ICON_GLOBE}Worldwide</span>
+    ${ownPill}${pills}
+    <span class="pill pill--more">•••</span>
+    <span class="filter">${ICON_MONITOR}${escapeHtml(deviceLabel)} ${ICON_CHEVRON}</span>
+    <span class="filter">${ICON_CALENDAR}${escapeHtml(dateLabel)} ${ICON_CHEVRON}</span>
+    <span class="filter filter--plain">USD</span>
+  </div>`;
 }
 
-function kpiTable(rows: CompetitorRow[]): string {
+/** The row that names the screen: filled slots, empty slots, Compare/Cancel. */
+function competitorRow(domain: string, competitors: string[]): string {
+  const filled = [domain, ...competitors].map(
+    (d, i) =>
+      `<span class="slot slot--on">
+         <span class="dot" style="background:${seriesColor(i)}"></span>
+         <span class="slot-text">${escapeHtml(truncate(d, 26))}</span>
+         <span class="slot-clear">${ICON_CLEAR}</span>
+       </span>`,
+  );
+  const empty = Array.from(
+    { length: Math.max(0, COMPETITOR_SLOTS - filled.length) },
+    () =>
+      `<span class="slot"><span class="dot dot--off"></span><span class="slot-text muted">Add competitor</span></span>`,
+  );
+  return `
+  <div class="compare-labels"><span>Root Domain ${ICON_CHEVRON}</span><span>Root Domain ${ICON_CHEVRON}</span></div>
+  <div class="compare-row">
+    ${[...filled, ...empty].join("")}
+    <span class="btn btn--primary">Compare</span>
+    <span class="btn">Cancel</span>
+  </div>`;
+}
+
+/* ------------------------------ KPI table ----------------------------- */
+
+const KPI_HEADERS = [
+  "Authority score",
+  "Rank",
+  "Org. Traffic",
+  "Org. Keywords",
+  "Backlinks",
+  "Ref. Domains",
+  "Paid Keywords",
+  "Paid Traffic Cost",
+] as const;
+
+function kpiTable(rows: CompetitorRow[], currency: string): string {
   if (rows.length === 0) {
-    return `<div class="card"><p class="muted">Sin datos.</p></div>`;
+    return `<p class="empty">No data.</p>`;
   }
-  const head = `
-    <thead>
-      <tr>
-        <th>Dominio</th>
-        <th class="num">Puntuación autoridad</th>
-        <th class="num">Ranking</th>
-        <th class="num">Tráfico orgánico</th>
-        <th class="num">Palabras clave org.</th>
-        <th class="num">Backlinks</th>
-        <th class="num">Dominios ref.</th>
-        <th class="num">Palabras clave de pago</th>
-        <th class="num">Coste tráfico de pago</th>
-      </tr>
-    </thead>`;
-  const body = `<tbody>${rows.map((r, i) => kpiRowCells(r, i)).join("")}</tbody>`;
-  return `
-    <div class="card">
-      <div class="card-head">
-        <h3>Tabla comparativa de KPI</h3>
-        <span class="muted">Puntuación autoridad (composición) · resto (Labs/Backlinks)</span>
-      </div>
-      <table class="data kpi">
-        ${head}
-        ${body}
-      </table>
-    </div>`;
+  const head = `<thead><tr>
+      <th>Domain <span class="th-info">${ICON_INFO}</span></th>
+      ${KPI_HEADERS.map((h) => `<th class="num">${h}</th>`).join("")}
+    </tr></thead>`;
+  const body = rows
+    .map((row, i) => {
+      const tone = seriesColor(i);
+      // The tinted row replaces the old PRINCIPAL badge: it says the same
+      // thing without spending width in the Domain column.
+      const cls = row.role === "primary" ? ' class="row--primary"' : "";
+      return `<tr${cls}>
+        <td>
+          <span class="dot" style="background:${tone}"></span>
+          <a class="domain-link">${escapeHtml(row.domain)}</a>
+        </td>
+        ${numCell(row.authority.value, row.authority.value == null ? undefined : String(row.authority.value))}
+        ${numCell(row.rank.value)}
+        ${numCell(row.organicTraffic.value)}
+        ${numCell(row.organicKeywords.value)}
+        ${numCell(row.backlinks.value)}
+        ${numCell(row.referringDomains.value)}
+        ${numCell(row.paidKeywords.value)}
+        ${row.paidTrafficCost.value == null ? `<td class="num">—</td>` : `<td class="num" title="${exact(row.paidTrafficCost.value)}">${money(row.paidTrafficCost.value, currency)}</td>`}
+      </tr>`;
+    })
+    .join("");
+  return `<table class="kpi">${head}<tbody>${body}</tbody></table>`;
 }
 
-/* ---------- 3-up charts ---------- */
+/* -------------------------------- cards ------------------------------- */
 
-function donutForRows(rows: CompetitorRow[]): string {
-  // Cuota de tráfico = organicTraffic per domain. Rows that failed api →
-  // value null and we still emit a 0 slice so the chart isn't blank.
-  const data = rows.map((r, i) => ({
-    name: truncateDomain(r.domain, 18),
+/** Small donut, drawn here rather than through `renderDonutChart` because the
+ *  reference's is ~70px with its legend outside, and that chart owns its own
+ *  legend and centre label. */
+function donutSvg(
+  slices: Array<{ value: number; color: string }>,
+  size = 72,
+): string {
+  const total = slices.reduce((a, s) => a + Math.max(0, s.value), 0);
+  const r = size / 2;
+  const stroke = size * 0.26;
+  const ring = r - stroke / 2;
+  if (total <= 0) {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${r}" cy="${r}" r="${ring}" fill="none" stroke="#eeeff0" stroke-width="${stroke}"/></svg>`;
+  }
+  const circumference = 2 * Math.PI * ring;
+  let offset = 0;
+  const arcs = slices
+    .map((s) => {
+      const share = Math.max(0, s.value) / total;
+      const len = share * circumference;
+      const dash = `${len.toFixed(2)} ${(circumference - len).toFixed(2)}`;
+      const arc = `<circle cx="${r}" cy="${r}" r="${ring}" fill="none" stroke="${s.color}" stroke-width="${stroke}" stroke-dasharray="${dash}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${r} ${r})"/>`;
+      offset += len;
+      return arc;
+    })
+    .join("");
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${arcs}</svg>`;
+}
+
+function trafficShareCard(rows: CompetitorRow[]): string {
+  const slices = rows.map((r, i) => ({
+    domain: r.domain,
     value: r.organicTraffic.value ?? 0,
-    color: roleColor(r.role, i),
+    color: seriesColor(i),
   }));
-  // Filter zero-value entries so the donut doesn't show a grey slice.
-  const filtered = data.filter((d) => d.value > 0);
-  if (filtered.length === 0) {
-    return `<div class="card chart">
-      <div class="card-head"><h3>Cuota de tráfico</h3><span class="muted">donut</span></div>
-      <div class="chart-body muted">Sin datos de tráfico</div>
-    </div>`;
+  const total = slices.reduce((a, s) => a + s.value, 0);
+  if (total <= 0) {
+    return card(
+      "Traffic share",
+      `<div class="donut-wrap"><div class="empty">No traffic data</div></div>`,
+    );
   }
-  const total = filtered.reduce((acc, d) => acc + d.value, 0);
-  return `<div class="card chart">
-    <div class="card-head"><h3>Cuota de tráfico</h3><span class="muted">donut · tráfico mensual</span></div>
-    <div class="chart-body">${renderDonutChart(
-      filtered.map((d) => ({ name: d.name, value: d.value })),
-      { width: 320, height: 240, centerLabel: "Tráfico total" },
-    )}</div>
-    <div class="chart-foot muted">Estimación mensual (Labs) · total ${fmtNumber(total)}</div>
-  </div>`;
-}
-
-function brandBarsForRows(rows: CompetitorRow[]): string {
-  // brandShare is 0..1; empty/null → grey bar.
-  const bars = rows
-    .map((r, i) => {
-      const total = r.brandShare.value ?? 0;
-      const nonBrand = r.nonBrandShare.value ?? 0;
-      const tone = roleColor(r.role, i);
-      return `
-        <div class="bar-row">
-          <div class="bar-label">${escapeHtml(truncateDomain(r.domain, 24))}</div>
-          <div class="bar-track">
-            <div class="bar-fill" style="width:${Math.round(total * 100)}%;background:${tone};"></div>
-            <div class="bar-text">${fmtPercent(total)} / ${fmtPercent(nonBrand)}</div>
-          </div>
-        </div>`;
-    })
-    .join("");
-  return `<div class="card chart">
-    <div class="card-head"><h3>Sin marca / De marca</h3><span class="muted">aprox. heurística token de marca</span></div>
-    <div class="chart-body" style="flex-direction:column;align-items:stretch;gap:8px;padding:8px 12px;">
-      ${bars || '<div class="muted">Sin datos</div>'}
-    </div>
-    <div class="chart-foot muted">⚠️ heurística: keyword contiene la etiqueta principal del dominio</div>
-  </div>`;
-}
-
-function paidOrganicBarsForRows(rows: CompetitorRow[]): string {
-  const bars = rows
-    .map((r, i) => {
-      const paid = r.paidTrafficCost.value ?? 0;
-      const organic = r.organicTraffic.value ?? 0;
-      const tone = roleColor(r.role, i);
-      const total = paid + organic;
-      const paidShare = total > 0 ? paid / total : 0;
-      const organicShare = total > 0 ? organic / total : 0;
-      return `
-        <div class="bar-row">
-          <div class="bar-label">${escapeHtml(truncateDomain(r.domain, 24))}</div>
-          <div class="bar-track">
-            <div class="bar-fill bar-fill--warn" style="width:${Math.round(paidShare * 100)}%;background:${tone};"></div>
-            <div class="bar-text">${fmtPercent(paidShare)} de pago · ${fmtPercent(organicShare)} orgánico</div>
-          </div>
-        </div>`;
-    })
-    .join("");
-  return `<div class="card chart">
-    <div class="card-head"><h3>De pago / Orgánico</h3><span class="muted">cost vs etv (Labs)</span></div>
-    <div class="chart-body" style="flex-direction:column;align-items:stretch;gap:8px;padding:8px 12px;">
-      ${bars || '<div class="muted">Sin datos</div>'}
-    </div>
-    <div class="chart-foot muted">Cost = paid.estimated_paid_traffic_cost · Orgánico = etv orgánico</div>
-  </div>`;
-}
-
-/* ---------- keyword gap tables ---------- */
-
-function gapTableHead(): string {
-  return `<thead><tr>
-    <th>Dominio</th>
-    <th>Palabra clave</th>
-    <th class="num">Volumen</th>
-  </tr></thead>`;
-}
-
-function gapRows(rows: KeywordGapRow[]): string {
-  if (rows.length === 0) {
-    return `<tr><td colspan="3" class="muted center">Sin datos</td></tr>`;
-  }
-  return rows
+  const legend = slices
     .map(
-      (r) => `<tr>
-        <td>${escapeHtml(r.ownedBy)}</td>
-        <td class="anchor">${escapeHtml(truncateDomain(r.keyword, 48))}</td>
-        <td class="num">${fmtNumber(r.volume)}</td>
-      </tr>`,
+      (s) =>
+        `<li><span class="dot" style="background:${s.color}"></span>
+           <span class="legend-name">${escapeHtml(truncate(s.domain, 24))}</span>
+           <span class="legend-value">${((s.value / total) * 100).toFixed(1)}%</span>
+         </li>`,
     )
     .join("");
+  return card(
+    "Traffic share",
+    `<div class="donut-wrap">
+       ${donutSvg(slices)}
+       <ul class="legend">${legend}</ul>
+     </div>`,
+  );
 }
 
-function gapCard(title: string, sub: string, rows: KeywordGapRow[]): string {
-  return `
-    <div class="card">
-      <div class="card-head">
-        <h3>${escapeHtml(title)}</h3>
-        <span class="muted">${escapeHtml(sub)}</span>
-      </div>
-      <table class="data gap">
-        ${gapTableHead()}
-        <tbody>${gapRows(rows)}</tbody>
-      </table>
-    </div>`;
-}
-
-/* ---------- Venn ---------- */
-
-function vennCard(
-  rows: CompetitorRow[],
-  venn: VennCounts,
-  vennFromRealCalls: boolean,
-  competitors: CompetitorsReportData["input"]["competitors"],
+/**
+ * A percentage bar row: figure, track, figure — both values OUTSIDE the bar.
+ * Printing them inside is what made a 4% value illegible on its own fill.
+ */
+function barRow(
+  label: string,
+  leftValue: number | null,
+  color: string,
 ): string {
-  if (competitors.length === 0) {
-    return `<div class="card chart">
-      <div class="card-head"><h3>Superposición de palabras clave</h3><span class="muted">venn</span></div>
-      <div class="chart-body muted">Añade al menos un competidor para habilitar el Venn.</div>
+  const left = leftValue ?? null;
+  const width = left == null ? 0 : Math.round(left * 100);
+  const right = left == null ? null : 1 - left;
+  return `<div class="bar-row">
+      <span class="bar-label">${escapeHtml(truncate(label, 24))}</span>
+      <span class="bar-value">${percent(left)}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${width}%;background:${color}"></span></span>
+      <span class="bar-value bar-value--right">${percent(right)}</span>
     </div>`;
-  }
+}
+
+function brandCard(rows: CompetitorRow[]): string {
+  // One colour for the whole card, like the reference: the rows are already
+  // labelled, and three different fills here would compete with the donut's
+  // per-domain colour coding.
+  const bars = rows
+    .map((r) => barRow(r.domain, r.nonBrandShare.value, "#6868d8"))
+    .join("");
+  return card(
+    "Non-branded / Branded",
+    `<div class="bars">${bars || '<div class="empty">No data</div>'}</div>`,
+    // Kept deliberately: it is honesty about an approximate figure.
+    "Heuristic: a keyword counts as branded when it contains the domain's leftmost label",
+  );
+}
+
+function paidOrganicCard(rows: CompetitorRow[]): string {
+  const bars = rows
+    .map((r) => {
+      // Both sources gone means we do not know the split — an em dash, not a
+      // 0% / 100% that looks like a measured "all organic".
+      const known =
+        r.paidTrafficCost.value != null || r.organicTraffic.value != null;
+      const paid = r.paidTrafficCost.value ?? 0;
+      const organic = r.organicTraffic.value ?? 0;
+      const total = paid + organic;
+      const share = !known ? null : total > 0 ? paid / total : 0;
+      return barRow(r.domain, share, "#14b8a6");
+    })
+    .join("");
+  return card(
+    "Paid / Organic",
+    `<div class="bars">${bars || '<div class="empty">No data</div>'}</div>`,
+  );
+}
+
+function card(title: string, body: string, foot?: string): string {
+  return `<section class="card">
+      <h3>${escapeHtml(title)}</h3>
+      ${body}
+      ${foot ? `<p class="card-foot">${escapeHtml(foot)}</p>` : ""}
+    </section>`;
+}
+
+/* ----------------------------- trend block ---------------------------- */
+
+/**
+ * The Organic Traffic module: a toolbar of drawn controls over a multi-line
+ * chart, one line per compared domain.
+ *
+ * Every control is markup (§ the file docstring). The visible metric and range
+ * are render parameters; nothing here reacts to anything.
+ *
+ * When `series` is empty the module still occupies its full height with an
+ * empty plot area. That is deliberate: dropping the block when the data is
+ * missing collapses the page and hides the gap instead of showing it.
+ */
+function trendBlock(
+  series: TrendSeries[],
+  range: string,
+  rows: CompetitorRow[],
+): string {
+  const lines = series
+    .map((s) => {
+      const index = rows.findIndex((r) => r.domain === s.domain);
+      return {
+        label: s.domain,
+        points: s.points,
+        color: seriesColor(index < 0 ? 0 : index),
+      };
+    })
+    .filter((s) => s.points.length > 1);
+
+  const checks = (
+    lines.length > 0
+      ? lines
+      : rows.map((r, i) => ({ label: r.domain, color: seriesColor(i) }))
+  )
+    .map(
+      (s) =>
+        `<span class="series-check"><span class="check" style="background:${s.color}"></span>${escapeHtml(truncate(s.label, 26))}</span>`,
+    )
+    .join("");
+
+  const plot =
+    lines.length > 0
+      ? renderMultiLineChart(lines, {
+          width: 1240,
+          height: 210,
+          // The block draws its own series row above the plot, the way the
+          // reference does; the chart's built-in legend would be a second one.
+          showLegend: false,
+        })
+      : `<div class="plot-empty">No traffic history available for these domains</div>`;
+
+  return `<section class="card trend">
+      <div class="trend-bar">
+        <span class="segmented">
+          <span class="seg seg--on">Organic</span>
+          <span class="seg">Paid</span>
+          <span class="seg">Backlinks</span>
+        </span>
+        <span class="trend-right">
+          <span class="segmented">
+            <span class="seg">Days</span>
+            <span class="seg seg--on">Months</span>
+          </span>
+          <span class="range">${ICON_CALENDAR}${escapeHtml(range)}</span>
+          <span class="range">${ICON_EXPORT}Export</span>
+        </span>
+      </div>
+      <h3 class="trend-title">Organic Traffic</h3>
+      <div class="series-checks">${checks}</div>
+      <div class="plot">${plot}</div>
+    </section>`;
+}
+
+/* ---------------------------- opportunities --------------------------- */
+
+function opportunitiesCard(
+  missing: KeywordGapRow[],
+  weak: KeywordGapRow[],
+  tab: "missing" | "weak",
+  flags: Record<string, string>,
+  country: string,
+): string {
+  const rows = tab === "missing" ? missing : weak;
+  // The tab is already filtered by competitor, so the owning domain rides on a
+  // chip above the table instead of costing a column on every row.
+  const owner = rows[0]?.ownedBy ?? "";
+  const body =
+    rows.length === 0
+      ? `<tr><td colspan="2" class="empty">No data</td></tr>`
+      : rows
+          .slice(0, 10)
+          .map(
+            (r) => `<tr>
+              <td><a class="kw-link">${escapeHtml(truncate(r.keyword, 38))}</a></td>
+              ${numCell(r.volume, r.volume == null ? undefined : EXACT_FMT.format(r.volume))}
+            </tr>`,
+          )
+          .join("");
+  return `<section class="card card--tight">
+      <h3>Top Opportunities ${flagMarkup(flags, country.toUpperCase())}<span class="h3-note">${escapeHtml(country.toUpperCase())}</span></h3>
+      <div class="segmented">
+        <span class="seg${tab === "missing" ? " seg--on" : ""}">Missing</span>
+        <span class="seg${tab === "weak" ? " seg--on" : ""}">Weak</span>
+      </div>
+      <div class="clear"></div>
+      ${owner ? `<div class="owner-chip"><span class="dot" style="background:${seriesColor(1)}"></span>${escapeHtml(truncate(owner, 28))}</div>` : ""}
+      <table class="gap">
+        <thead><tr><th>Keyword</th><th class="num">Volume</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+      <span class="btn btn--primary btn--block">View details</span>
+    </section>`;
+}
+
+/* --------------------------------- Venn -------------------------------- */
+
+type OverlapCardInput = {
+  rows: CompetitorRow[];
+  venn: VennCounts;
+  vennFromRealCalls: boolean;
+  competitors: string[];
+  flags: Record<string, string>;
+  country: string;
+};
+
+function overlapCard({
+  rows,
+  venn,
+  vennFromRealCalls,
+  competitors,
+  flags,
+  country,
+}: OverlapCardInput): string {
   const primary = rows[0]?.domain ?? "";
   const comp1 = competitors[0] ?? "";
   const comp2 = competitors[1] ?? "";
-  // Total keywords = owned-by-primary union with each competitor's own
-  // exclusive + pairwise intersections. We use only real counts so the
-  // template doesn't visually mislead on the comp1∩comp2 lobe when it's
-  // approximated.
-  const realTotal =
-    venn.primaryAndComp1 + venn.primaryAndComp2 + venn.comp1Only;
-  const total = realTotal > 0 ? realTotal : undefined;
+
   const sets = [
     {
       label: primary,
       value: venn.primaryOnly + venn.primaryAndComp1 + venn.primaryAndComp2,
-      color: ROLE_COLORS.primary,
+      color: seriesColor(0),
     },
-    {
-      label: comp1,
-      value: venn.comp1Only + venn.primaryAndComp1 + (venn.comp1AndComp2 ?? 0),
-      color: ROLE_COLORS.comp1,
-    },
-    {
-      label: comp2,
-      value: venn.comp2Only + venn.primaryAndComp2 + (venn.comp1AndComp2 ?? 0),
-      color: ROLE_COLORS.comp2,
-    },
-  ].filter((s) => s.label.length > 0);
+    comp1
+      ? {
+          label: comp1,
+          value: venn.comp1Only + venn.primaryAndComp1,
+          color: seriesColor(1),
+        }
+      : null,
+    comp2
+      ? {
+          label: comp2,
+          value: venn.comp2Only + venn.primaryAndComp2,
+          color: seriesColor(2),
+        }
+      : null,
+  ].filter(
+    (s): s is { label: string; value: number; color: string } => s != null,
+  );
+
   const pairs = [
-    { left: primary, right: comp1, value: venn.primaryAndComp1 },
-    { left: primary, right: comp2, value: venn.primaryAndComp2 },
-  ];
-  if (comp2.length > 0 && venn.comp1AndComp2 != null) {
-    pairs.push({
-      left: comp1,
-      right: comp2,
-      value: venn.comp1AndComp2,
-    });
-  }
-  const warning =
-    comp2.length > 0 && venn.comp1AndComp2 === 0 && !vennFromRealCalls
-      ? `<div class="chart-foot muted">⚠️ intersección comp1 ∩ comp2 aproximada (no se llamó pairwise)</div>`
-      : "";
-  return `<div class="card chart">
-    <div class="card-head">
-      <h3>Superposición de palabras clave</h3>
-      <span class="muted">venn · 3 círculos</span>
-    </div>
-    <div class="chart-body" style="min-height:240px;">${renderVennDiagram({
-      sets,
-      pairs,
-      total,
-    })}</div>
-    ${warning}
-    <ul class="venn-legend">
-      ${rows
-        .slice(0, 3)
-        .map(
-          (r, i) =>
-            `<li><span class="dot" style="background:${roleColor(r.role, i)}"></span>${escapeHtml(r.domain)}<span class="muted">${fmtNumber(r.organicKeywords.value)} kws</span></li>`,
-        )
-        .join("")}
-    </ul>
-  </div>`;
+    comp1 ? { left: primary, right: comp1, value: venn.primaryAndComp1 } : null,
+    comp2 ? { left: primary, right: comp2, value: venn.primaryAndComp2 } : null,
+    // The service has no competitor-to-competitor call, so this lobe is a
+    // bound. It renders "≈": a printed 0 would read as measured.
+    comp1 && comp2
+      ? { left: comp1, right: comp2, value: 0, approximate: true }
+      : null,
+  ].filter((p): p is NonNullable<typeof p> => p != null);
+
+  const legend = sets
+    .map(
+      (s, i) =>
+        `<li><span class="check" style="background:${seriesColor(i)}"></span>
+           <span class="legend-name">${escapeHtml(truncate(s.label, 28))}</span>
+           <span class="legend-value">${compact(s.value)}</span></li>`,
+    )
+    .join("");
+
+  const body =
+    competitors.length === 0
+      ? `<div class="empty">Add a competitor to compare keyword sets</div>`
+      : `<div class="overlap">
+           <div class="venn">${renderVennDiagram({
+             sets,
+             pairs,
+             total: vennFromRealCalls
+               ? venn.primaryAndComp1 + venn.primaryAndComp2 + venn.comp1Only
+               : undefined,
+             // Labels off: the legend to its right carries the domain and the
+             // count, exactly as the reference does, and two sets of labels
+             // for the same three circles is noise.
+             opts: { width: 430, height: 290, showLabels: false },
+           })}</div>
+           <ul class="legend legend--overlap">${legend}</ul>
+         </div>`;
+
+  return `<section class="card card--tight">
+      <h3>Keyword Overlap ${flagMarkup(flags, country.toUpperCase())}<span class="h3-note">${escapeHtml(country.toUpperCase())}</span></h3>
+      ${body}
+    </section>`;
 }
 
-/* ---------- top-level ---------- */
+/* ------------------------------ top-level ------------------------------ */
+
+const MONTH_FMT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/** The plotted range, read off the series. With no series there is no range to
+ *  name, so the control renders a dash rather than a window we never drew. */
+function rangeLabel(series: TrendSeries[]): string {
+  const dates = series
+    .flatMap((s) => s.points.map((p) => p.date))
+    .filter((d) => d.length >= 7);
+  // oxlint-disable-next-line unicorn/no-array-sort -- no toSorted() on this project's ES2022 lib; flatMap already returned a fresh array, nothing to mutate
+  dates.sort();
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  if (!first || !last) return "—";
+  return `${MONTH_FMT.format(new Date(first))} – ${MONTH_FMT.format(new Date(last))}`;
+}
+
+/** UTC on purpose: `new Date("2026-09-21")` is UTC midnight, and formatting
+ *  that in a negative-offset zone prints the 20th. A report date that drifts by
+ *  a day depending on where the renderer runs is not a date. */
+const DATE_FMT = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
 
 export function renderCompetitorsReport({
   report,
@@ -364,13 +661,22 @@ export function renderCompetitorsReport({
   country,
   device,
   data,
+  flags,
+  opportunitiesTab = "missing",
+  reportDate,
 }: CompetitorsTemplateInput): string {
   const title = REPORT_TITLES[report];
   const deviceLabel = DEVICE_LABELS[device] ?? device;
   const rows = data.rows;
   const competitors = data.input.competitors;
+  const currency = "USD";
+  const dateLabel = DATE_FMT.format(
+    reportDate ? new Date(reportDate) : new Date(),
+  );
+  const trendSeries =
+    data.trafficTrend.source === "ok" ? data.trafficTrend.value : [];
+  const trendRangeLabel = rangeLabel(trendSeries);
 
-  // Keyword gap — both tabs rendered as separate cards (renderer JS-free).
   const missingRows =
     data.keywordGap.missing.source === "ok"
       ? data.keywordGap.missing.value
@@ -390,172 +696,213 @@ export function renderCompetitorsReport({
         } satisfies VennCounts);
 
   return `<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} · ${escapeHtml(domain)}</title>
 <style>
   :root {
-    --bg: #f5f7fa;
+    --bg: #f4f5f5;
     --card: #ffffff;
-    --text: #1f2933;
-    --muted: #6b7785;
-    --border: #e4e9f0;
-    --brand: #1f6feb;
+    --text: #202020;
+    --muted: #6b7280;
+    --border: #eeeff0;
+    /* Darker than --border: the hairline around an interactive control has to
+       read as an edge, not as a divider. */
+    --control-border: #d6d8dc;
+    --brand: #6868d8;
+    --filter-blue: #0051ff;
     --accent: #14b8a6;
-    --warn: #ef4444;
-    --warn-bg: #fff1f2;
+    /* Sampled from the reference's own primary row and link text. */
+    --row-tint: #e1fffa;
+    --link: #2397ed;
+    /* Cards carry this shadow instead of a border: a 1px border hardens them. */
+    --card-shadow: rgba(0, 21, 16, 0.07) 0 0 1px 0, rgba(0, 21, 16, 0.07) 0 1px 3px 0;
+    --radius: 10px;
+    --gap: 12px;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text); padding: 32px;
+    background: var(--bg); color: var(--text);
+    padding: 16px 18px 20px;
+    font-size: 13px;
   }
-  .shell { max-width: 1216px; margin: 0 auto; }
-  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 16px; margin: 24px 0 12px; color: var(--text); }
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
-  .chip {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 500;
-    background: var(--card); border: 1px solid var(--border); color: var(--muted);
-  }
-  .chip svg { width: 14px; height: 14px; }
-  .chip .dot {
-    width: 10px; height: 10px; border-radius: 50%;
-  }
-
-  .card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 18px;
-    margin-bottom: 16px;
-  }
-  .card.chart { padding-bottom: 12px; }
-  .card-head {
-    display: flex; align-items: baseline; justify-content: space-between;
-    margin-bottom: 12px; gap: 8px;
-  }
-  .card-head h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
-  .card-head .muted { font-size: 12px; color: var(--muted); }
   .muted { color: var(--muted); }
-  .center { text-align: center; }
-  .chart-body { display: flex; justify-content: center; align-items: center; min-height: 200px; padding: 4px; }
-  .chart-body svg { max-height: 320px; }
-  .chart-foot { font-size: 11px; color: var(--muted); margin-top: 8px; padding: 0 4px; }
+  .empty { color: var(--muted); font-size: 12px; text-align: center; padding: 18px 0; }
 
-  .row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-
-  table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  table.data th, table.data td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-  table.data th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
-  table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  table.data td.anchor { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
-  table.data tr:last-child td { border-bottom: 0; }
-
-  table.kpi td.num { font-size: 13.5px; }
-  .domain-cell { display: flex; align-items: center; gap: 8px; }
-  .domain-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-  .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: #e0ecff;
-    color: var(--brand);
-    font-size: 10.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-left: 4px;
+  /* --- query bar --- */
+  .query-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .query-input {
+    display: inline-flex; align-items: center; justify-content: space-between; gap: 10px;
+    min-width: 330px; height: 32px; padding: 0 10px;
+    background: var(--card); border: 1px solid var(--control-border); border-radius: 4px;
+  }
+  .query-clear { color: var(--muted); display: inline-flex; }
+  .query-clear svg { width: 13px; height: 13px; }
+  .query-scope {
+    display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+    background: var(--card); border: 1px solid var(--control-border); border-radius: 4px;
+  }
+  .query-scope svg { width: 12px; height: 12px; color: var(--muted); }
+  .query-go {
+    display: inline-flex; align-items: center; height: 32px; padding: 0 14px;
+    background: #1a1a1a; color: #fff; border-radius: 4px; font-weight: 600; font-size: 12.5px;
   }
 
-  .bar-row { display: flex; align-items: center; gap: 10px; }
-  .bar-label { width: 130px; flex: 0 0 auto; font-size: 12px; color: var(--text); }
-  .bar-track {
-    flex: 1 1 auto; background: var(--bg);
-    border-radius: 6px; height: 18px; position: relative;
-    border: 1px solid var(--border); overflow: hidden;
-  }
-  .bar-fill { height: 100%; }
-  .bar-fill--warn { background: var(--warn) !important; }
-  .bar-text {
-    position: absolute; top: 1px; left: 8px;
-    font-size: 11px; color: var(--text);
-    text-shadow: 0 0 4px rgba(255, 255, 255, 0.7);
-  }
+  /* --- context --- */
+  .crumbs { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .crumbs span { margin: 0 6px; color: #b6bcc2; }
+  .crumbs b { color: var(--text); font-weight: 500; }
+  h1 { font-size: 21px; font-weight: 700; margin: 0 0 10px; letter-spacing: -0.01em; }
+  .h1-domain { color: var(--brand); }
+  .h1-ext { display: inline-flex; color: var(--muted); }
+  .h1-ext svg { width: 13px; height: 13px; }
 
-  .venn-legend {
-    list-style: none; padding: 0; margin: 12px 0 0;
-    display: flex; flex-direction: column; gap: 6px;
+  /* --- market row --- */
+  .market-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px;
+    background: var(--card); border: 1px solid var(--control-border); border-radius: 4px;
+    font-size: 12px; color: var(--text);
   }
-  .venn-legend li {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 12px;
+  .pill--on { background: #e6e9fc; border-color: #c9cef5; }
+  .pill--globe svg { width: 13px; height: 13px; color: var(--muted); }
+  .pill--more { color: var(--muted); letter-spacing: 1px; padding: 0 7px; }
+  .flag { display: inline-flex; width: 15px; height: 11px; overflow: hidden; border-radius: 1px; }
+  .flag svg { width: 15px; height: 11px; }
+  .filter {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin-left: 8px; font-size: 12.5px; color: var(--filter-blue);
   }
-  .venn-legend .dot {
-    width: 12px; height: 12px; border-radius: 50%;
-  }
+  .filter svg { width: 13px; height: 13px; }
+  .filter--plain { color: var(--text); }
 
-  .footer {
-    margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--border);
-    font-size: 11px; color: var(--muted); display: flex; justify-content: space-between;
+  /* --- competitor row --- */
+  .compare-labels { display: flex; gap: 150px; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .compare-labels svg { width: 11px; height: 11px; vertical-align: -1px; }
+  .compare-row { display: flex; align-items: center; gap: 7px; margin-bottom: 16px; }
+  .slot {
+    display: inline-flex; align-items: center; gap: 7px; justify-content: space-between;
+    height: 32px; padding: 0 9px; flex: 1 1 0; min-width: 0;
+    background: var(--card); border: 1px solid var(--control-border); border-radius: 4px;
+    font-size: 12.5px;
   }
+  .slot-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slot-clear { color: var(--muted); display: inline-flex; }
+  .slot-clear svg { width: 12px; height: 12px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
+  .dot--off { background: #c8ccd0; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 14px;
+    background: var(--card); border: 1px solid var(--control-border); border-radius: 4px;
+    font-size: 12.5px; font-weight: 500; flex: 0 0 auto;
+  }
+  .btn--primary { background: #1a1a1a; color: #fff; border-color: #1a1a1a; font-weight: 600; }
+  .btn--block { display: flex; margin-top: 10px; align-self: flex-start; }
+
+  /* --- KPI table: on the page, not in a card --- */
+  table.kpi { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 16px; background: transparent; }
+  table.kpi th {
+    text-align: left; font-weight: 400; font-size: 12px; color: var(--muted);
+    padding: 8px 10px; border-bottom: 1px solid var(--control-border);
+  }
+  table.kpi th.num, table.kpi td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.kpi td { padding: 10px; border-bottom: 1px solid var(--border); }
+  table.kpi tbody tr { background: var(--card); }
+  table.kpi tbody tr.row--primary { background: var(--row-tint); }
+  .th-info { display: inline-flex; color: #b6bcc2; vertical-align: -2px; }
+  .th-info svg { width: 12px; height: 12px; }
+  .domain-link { color: var(--link); margin-left: 7px; }
+
+  /* --- cards --- */
+  .row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); margin-bottom: var(--gap); }
+  .card {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--card-shadow);
+    padding: 14px 16px;
+  }
+  .card--tight { padding: 12px 14px; }
+  .card h3 {
+    margin: 0 0 12px; font-size: 14px; font-weight: 700; color: var(--text);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .h3-note { font-size: 11px; color: var(--muted); font-weight: 500; }
+  .card-foot { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
+
+  .donut-wrap { display: flex; align-items: center; gap: 16px; min-height: 86px; }
+  .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; flex: 1 1 auto; min-width: 0; }
+  .legend li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+  .legend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .legend-value { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .legend--top { flex-direction: column; margin-bottom: 6px; max-width: 320px; }
+  .check { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
+
+  .bars { display: flex; flex-direction: column; gap: 10px; min-height: 86px; justify-content: center; }
+  .bar-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .bar-label { width: 116px; flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-value { width: 34px; flex: 0 0 auto; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar-value--right { text-align: left; }
+  /* Square, not pill-shaped: the reference's tracks have straight corners. */
+  .bar-track { flex: 1 1 auto; height: 11px; border-radius: 1px; background: #eeeff0; overflow: hidden; }
+  .bar-fill { display: block; height: 100%; border-radius: 0; }
+
+  /* --- bottom row --- */
+  .row-bottom { display: grid; grid-template-columns: 28% minmax(0, 1fr); gap: var(--gap); align-items: stretch; }
+  .clear { height: 0; }
+  .segmented { display: flex; width: max-content; border: 1px solid var(--control-border); border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+  .seg { padding: 4px 12px; font-size: 12px; color: var(--muted); background: var(--card); }
+  .seg--on { background: #f1f3fd; color: var(--text); font-weight: 600; box-shadow: inset 0 0 0 1px #c9cef5; }
+  .owner-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; margin-bottom: 8px; }
+  table.gap { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.gap th { text-align: left; font-weight: 400; font-size: 12px; color: var(--muted); padding: 7px 0; border-bottom: 1px solid var(--border); }
+  table.gap th.num, table.gap td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.gap td { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .kw-link { color: var(--link); }
+  .venn { display: flex; justify-content: center; align-items: center; }
+  .overlap { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; align-items: start; }
+  .legend--overlap { padding-top: 6px; }
+
+  .trend { margin-bottom: var(--gap); padding: 12px 16px 6px; }
+  .trend-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .trend-right { display: flex; align-items: center; gap: 10px; }
+  .range { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px;
+           border: 1px solid var(--control-border); border-radius: 4px; font-size: 12px; }
+  .range svg { width: 13px; height: 13px; color: var(--muted); }
+  .trend-title { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+  .series-checks { display: flex; gap: 16px; margin-bottom: 4px; font-size: 12.5px; }
+  .series-check { display: inline-flex; align-items: center; gap: 7px; }
+  .plot { display: flex; justify-content: center; }
+  .plot-empty { width: 100%; height: 210px; display: flex; align-items: center; justify-content: center;
+                color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
-  <div class="shell">
-    <h1>${escapeHtml(title)}</h1>
-    <div class="chips">
-      <span class="chip">
-        <span class="dot" style="background:${ROLE_COLORS.primary}"></span>
-        ${escapeHtml(domain)}
-      </span>
-      ${competitors
-        .map(
-          (c, i) =>
-            `<span class="chip"><span class="dot" style="background:${roleColor("competitor", i + 1)}"></span>${escapeHtml(c)}</span>`,
-        )
-        .join("")}
-      <span class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-        País: ${escapeHtml(country.toUpperCase())}
-      </span>
-      <span class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
-        ${escapeHtml(deviceLabel)}
-      </span>
-      ${data.healthy ? "" : `<span class="chip" style="color:var(--warn);border-color:#fecaca;">Datos parciales</span>`}
-    </div>
-
-    ${kpiTable(rows)}
-
-    <h2>Visión comparada</h2>
-    <div class="row-3">
-      ${donutForRows(rows)}
-      ${brandBarsForRows(rows)}
-      ${paidOrganicBarsForRows(rows)}
-    </div>
-
-    <h2>Principales oportunidades de palabras clave</h2>
-    <div class="row-3" style="grid-template-columns: 1fr 1fr 1fr;">
-      <div>
-        ${gapCard(
-          "Faltantes",
-          "palabras clave que solo rankea el competidor",
-          missingRows,
-        )}
-        ${gapCard("Débiles", "palabras clave que ambos rankean", weakRows)}
-      </div>
-      <div style="grid-column: span 2;">
-        ${vennCard(rows, venn, data.vennFromRealCalls, competitors)}
-      </div>
-    </div>
-
-    <div class="footer">
-      <span>Datos propios (DataForSEO)</span>
-      <span>${escapeHtml(report)} · ${escapeHtml(country.toUpperCase())} · ${escapeHtml(deviceLabel)} · ${competitors.length} competidor${competitors.length === 1 ? "" : "es"}</span>
-    </div>
+  ${headerBand({ title, domain, country, deviceLabel, flags, dateLabel })}
+  ${competitorRow(domain, competitors)}
+  ${data.healthy ? "" : `<p class="muted" style="font-size:12px;margin:0 0 8px;">Partial data — some sources did not answer</p>`}
+  ${kpiTable(rows, currency)}
+  <div class="row-3">
+    ${trafficShareCard(rows)}
+    ${brandCard(rows)}
+    ${paidOrganicCard(rows)}
+  </div>
+  ${trendBlock(
+    data.trafficTrend.source === "ok" ? data.trafficTrend.value : [],
+    trendRangeLabel,
+    rows,
+  )}
+  <div class="row-bottom">
+    ${opportunitiesCard(missingRows, weakRows, opportunitiesTab, flags, country)}
+    ${overlapCard({
+      rows,
+      venn,
+      vennFromRealCalls: data.vennFromRealCalls,
+      competitors,
+      flags,
+      country,
+    })}
   </div>
 </body>
 </html>`;

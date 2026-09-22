@@ -11,7 +11,10 @@ import {
 } from "@/server/lib/render/renderer-client";
 import { renderReportShell } from "@/server/lib/render/templates/shell";
 import { renderBacklinksReport } from "@/server/lib/render/templates/backlinks";
-import { renderCompetitorsReport } from "@/server/lib/render/templates/competitors";
+import {
+  competitorsFlagCodes,
+  renderCompetitorsReport,
+} from "@/server/lib/render/templates/competitors";
 import {
   keywordsFlagCodes,
   renderKeywordsReport,
@@ -140,12 +143,14 @@ async function buildReportHtml({
       country,
       competitors: competitors ?? [],
     });
+    const flags = await loadCountryFlags(competitorsFlagCodes(country));
     return renderCompetitorsReport({
       report,
       domain,
       country,
       device,
       data,
+      flags,
     });
   }
   if (report === "overview") {

@@ -85,6 +85,13 @@ export type KeywordGapRow = {
   ownedBy: string;
 };
 
+/** One domain's traffic history, for the trend block. */
+export type TrendSeries = {
+  domain: string;
+  /** Oldest first. A null value is a gap, not a zero. */
+  points: Array<{ date: string; value: number | null }>;
+};
+
 export type VennCounts = {
   /** Primary keywords with no overlap. */
   primaryOnly: number;
@@ -111,6 +118,16 @@ export type CompetitorsReportData = {
   healthy: boolean;
   /** One row per domain (primary first, then competitors). */
   rows: CompetitorRow[];
+  /**
+   * Monthly organic-traffic history per domain, for the trend block.
+   *
+   * No fetcher fills this yet: the Labs rank-overview call this service uses
+   * returns a snapshot, not a series, and inventing a curve is not an option
+   * (see the file docstring's rule). It ships as `empty` so the template
+   * renders the module at full height with its empty state, which keeps the
+   * page geometry stable for the day a historical fetch does exist.
+   */
+  trafficTrend: Source<TrendSeries[]>;
   /** Keyword-gap blocks for the Faltantes / Débiles tabs. */
   keywordGap: {
     missing: Source<KeywordGapRow[]>;
@@ -503,6 +520,7 @@ export async function buildCompetitorsReportData(
     healthy,
     rows,
     keywordGap: { missing, weak },
+    trafficTrend: empty<TrendSeries[]>([]),
     competitorCount: competitors.length,
     vennFromRealCalls: anyPairOk,
     venn,
