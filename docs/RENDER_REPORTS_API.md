@@ -78,6 +78,11 @@ have product defaults.
 `competitors` report, the report degrades to a single-domain view
 (see [Competitors report](#competitors-report)).
 
+`keyword` is only consulted when `report=keywords`, where it is the seed the
+report analyses; when it is omitted there, `domain` is used as the seed instead,
+so a caller with a single free-text field can put the seed in either. `domain`
+stays required in all four cases.
+
 Note: `device` is validated and passed to the report template as an
 informational chip — it does **not** change the renderer's viewport, which is
 fixed at 1280px wide (the height is dynamic — see [Limitations](#limitations)).
